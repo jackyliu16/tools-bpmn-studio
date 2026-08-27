@@ -9,6 +9,31 @@
   --bg: #f6f7f9;
   --border: #d7dbe0;
   --text: #2c3e50;
+  --text-secondary: #6b7683;
+  --surface: #ffffff;
+  --surface-alt: #f2f5f7;
+  --surface-hover: #eef3f7;
+  --surface-active-bg: #e6f6ff;
+  --lint-bg: #fffdf5;
+  --lint-header-bg: #fbf4d9;
+  --lint-header-border: #ecd9a0;
+  --lint-summary-color: #8a6d1d;
+  --notice-bg: #fff7e0;
+  --notice-border: #ecd9a0;
+  --notice-color: #7a5b0f;
+  --dirty-color: #e67e22;
+  --meta-stat-bg: #f2f6fa;
+  --error-title-color: #c0392b;
+  --error-msg-bg: #fdf2f2;
+  --error-msg-border: #f5c6c6;
+  --error-msg-color: #2c3e50;
+  --error-details-color: #8a6d1d;
+  --minimap-closed-bg: rgba(255, 255, 255, 0.95);
+  --minimap-shadow: rgba(0, 0, 0, 0.15);
+  --code-bg: #1e2430;
+  --code-color: #e8ecf2;
+  --properties-panel-bg: #ffffff;
+  --properties-panel-header-bg: #f2f5f7;
 }
 
 * { box-sizing: border-box; }
@@ -38,7 +63,7 @@ html, body {
   gap: 10px;
   height: var(--topbar-h);
   padding: 0 12px;
-  background: #ffffff;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
   user-select: none;
@@ -73,13 +98,13 @@ html, body {
   flex: 1;
   text-align: center;
   font-size: 13px;
-  color: #6b7683;
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-#topbar .diagram-meta #dirty { color: #e67e22; margin-left: 2px; }
+#topbar .diagram-meta #dirty { color: var(--dirty-color); margin-left: 2px; }
 
 .tool {
   border: 1px solid transparent;
@@ -93,10 +118,10 @@ html, body {
   white-space: nowrap;
 }
 
-.tool:hover { background: #eef3f7; border-color: var(--border); }
+.tool:hover { background: var(--surface-hover); border-color: var(--border); }
 
 .tool.active {
-  background: #e6f6ff;
+  background: var(--surface-active-bg);
   border-color: var(--accent);
   color: var(--accent-dark);
 }
@@ -126,7 +151,7 @@ html, body {
   width: var(--panel-w);
   flex: 0 0 auto;
   border-left: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--surface);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -136,7 +161,7 @@ html, body {
 }
 
 #js-properties-panel .bio-properties-panel-header {
-  background: #f2f5f7;
+  background: var(--surface-alt);
   border-bottom: 1px solid var(--border);
 }
 
@@ -146,7 +171,7 @@ html, body {
   max-height: 160px;
   overflow-y: auto;
   border-top: 1px solid var(--border);
-  background: #fffdf5;
+  background: var(--lint-bg);
 }
 
 #lint-panel .lint-header {
@@ -154,15 +179,15 @@ html, body {
   align-items: center;
   gap: 10px;
   padding: 6px 12px;
-  background: #fbf4d9;
-  border-bottom: 1px solid #ecd9a0;
+  background: var(--lint-header-bg);
+  border-bottom: 1px solid var(--lint-header-border);
   font-size: 13px;
   font-weight: 600;
   position: sticky;
   top: 0;
 }
 
-#lint-panel .lint-header #lint-summary { font-weight: 400; color: #8a6d1d; }
+#lint-panel .lint-header #lint-summary { font-weight: 400; color: var(--lint-summary-color); }
 
 #lint-panel .lint-header .tool { margin-left: auto; padding: 2px 8px; }
 
@@ -181,10 +206,10 @@ html, body {
   align-items: center;
   height: var(--statusbar-h);
   padding: 0 12px;
-  background: #ffffff;
+  background: var(--surface);
   border-top: 1px solid var(--border);
   font-size: 12px;
-  color: #6b7683;
+  color: var(--text-secondary);
   flex: 0 0 auto;
   user-select: none;
 }
@@ -203,13 +228,13 @@ html, body {
   right: 12px;
   bottom: 12px;
   border-radius: 4px;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 1px 6px var(--minimap-shadow);
 }
 
 /* closed minimap: only the tiny reopen toggle remains, nothing else */
 .djs-minimap:not(.open) {
   pointer-events: none;
-  background-color: rgba(255, 255, 255, 0.95);
+  background-color: var(--minimap-closed-bg);
 }
 
 .djs-minimap:not(.open) .toggle {
@@ -221,7 +246,7 @@ html, body {
   min-width: 44px;
   text-align: center;
   font-size: 12px;
-  color: #6b7683;
+  color: var(--text-secondary);
 }
 
 /* ---------- token simulation ---------- */
@@ -331,9 +356,9 @@ mark.xml-match.current {
   align-items: center;
   gap: 10px;
   padding: 8px 14px;
-  background: #fff7e0;
-  border-bottom: 1px solid #ecd9a0;
-  color: #7a5b0f;
+  background: var(--notice-bg);
+  border-bottom: 1px solid var(--notice-border);
+  color: var(--notice-color);
   font-size: 13px;
 }
 
@@ -357,7 +382,7 @@ mark.xml-match.current {
   max-height: 86vh;
   overflow-y: auto;
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--surface);
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35);
   padding: 28px 32px;
   font-size: 14px;
@@ -371,16 +396,16 @@ mark.xml-match.current {
 .error-card #error-title {
   font-size: 22px;
   font-weight: 700;
-  color: #c0392b;
+  color: var(--error-title-color);
   margin: 6px 0 12px;
 }
 
 .error-card .error-message {
   font-size: 16px;
   line-height: 1.6;
-  color: #2c3e50;
-  background: #fdf2f2;
-  border: 1px solid #f5c6c6;
+  color: var(--error-msg-color);
+  background: var(--error-msg-bg);
+  border: 1px solid var(--error-msg-border);
   border-radius: 8px;
   padding: 14px 16px;
   margin: 0 0 14px;
@@ -399,7 +424,7 @@ mark.xml-match.current {
 .error-card .error-details summary {
   cursor: pointer;
   font-size: 13px;
-  color: #6b7683;
+  color: var(--text-secondary);
   padding: 6px 0;
   user-select: none;
 }
@@ -408,8 +433,8 @@ mark.xml-match.current {
   font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
   font-size: 12.5px;
   line-height: 1.55;
-  background: #1e2430;
-  color: #e8ecf2;
+  background: var(--code-bg);
+  color: var(--code-color);
   border-radius: 8px;
   padding: 14px;
   max-height: 220px;
@@ -423,7 +448,7 @@ mark.xml-match.current {
   margin: 8px 0 0;
   padding-left: 20px;
   font-size: 13px;
-  color: #8a6d1d;
+  color: var(--error-details-color);
 }
 
 .app-overlay-actions {
@@ -479,7 +504,7 @@ mark.xml-match.current {
 }
 
 .meta-grid dt {
-  color: #6b7683;
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -496,7 +521,7 @@ mark.xml-match.current {
 .meta-stats { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .meta-stats .stat {
-  background: #f2f6fa;
+  background: var(--meta-stat-bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 12px;
@@ -506,7 +531,7 @@ mark.xml-match.current {
 
 .meta-stats .stat .num { font-size: 20px; font-weight: 700; color: var(--accent-dark); }
 
-.meta-stats .stat .lbl { font-size: 12px; color: #6b7683; }
+.meta-stats .stat .lbl { font-size: 12px; color: var(--text-secondary); }
 
 /* ---------- DMN canvas ---------- */
 #js-dmn-canvas {
@@ -524,6 +549,136 @@ mark.xml-match.current {
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
   margin: 0 4px;
+}
+
+/* ================================================================
+ * DARK THEME — app shell overrides
+ * Activated by data-theme="dark" on <html>.
+ * Diagram / properties-panel variables live in dark-theme.css.
+ * ================================================================ */
+html[data-theme="dark"] {
+  --bg: hsl(222, 18%, 10%);
+  --border: hsl(222, 12%, 22%);
+  --text: hsl(222, 15%, 85%);
+  --text-secondary: hsl(222, 10%, 55%);
+  --surface: hsl(222, 18%, 12%);
+  --surface-alt: hsl(222, 16%, 14%);
+  --surface-hover: hsl(222, 14%, 18%);
+  --surface-active-bg: hsl(205, 50%, 16%);
+  --lint-bg: hsl(40, 30%, 10%);
+  --lint-header-bg: hsl(40, 25%, 14%);
+  --lint-header-border: hsl(40, 20%, 24%);
+  --lint-summary-color: hsl(40, 60%, 65%);
+  --notice-bg: hsl(40, 35%, 12%);
+  --notice-border: hsl(40, 25%, 24%);
+  --notice-color: hsl(40, 60%, 65%);
+  --dirty-color: hsl(28, 80%, 60%);
+  --meta-stat-bg: hsl(222, 16%, 14%);
+  --error-title-color: hsl(0, 70%, 65%);
+  --error-msg-bg: hsl(0, 40%, 12%);
+  --error-msg-border: hsl(0, 35%, 28%);
+  --error-msg-color: hsl(222, 15%, 85%);
+  --error-details-color: hsl(40, 60%, 65%);
+  --minimap-closed-bg: hsla(222, 18%, 12%, 0.95);
+  --minimap-shadow: rgba(0, 0, 0, 0.4);
+  --code-bg: hsl(222, 20%, 8%);
+  --code-color: hsl(222, 15%, 85%);
+  --properties-panel-bg: hsl(222, 18%, 12%);
+  --properties-panel-header-bg: hsl(222, 16%, 14%);
+}
+
+html[data-theme="dark"] body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+html[data-theme="dark"] #topbar {
+  background: var(--surface);
+  border-bottom-color: var(--border);
+}
+
+html[data-theme="dark"] #statusbar {
+  background: var(--surface);
+  border-top-color: var(--border);
+  color: var(--text-secondary);
+}
+
+html[data-theme="dark"] .tool {
+  color: var(--text);
+}
+
+html[data-theme="dark"] .tool:hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+html[data-theme="dark"] .tool.active {
+  background: var(--surface-active-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+html[data-theme="dark"] #js-properties-panel {
+  background: var(--properties-panel-bg);
+  border-left-color: var(--border);
+}
+
+html[data-theme="dark"] #js-properties-panel .bio-properties-panel-header {
+  background: var(--properties-panel-header-bg);
+  border-bottom-color: var(--border);
+}
+
+html[data-theme="dark"] #lint-panel {
+  background: var(--lint-bg);
+  border-top-color: var(--border);
+}
+
+html[data-theme="dark"] #lint-panel .lint-header {
+  background: var(--lint-header-bg);
+  border-bottom-color: var(--lint-header-border);
+}
+
+html[data-theme="dark"] #lint-panel .lint-header #lint-summary {
+  color: var(--lint-summary-color);
+}
+
+html[data-theme="dark"] #notice-bar {
+  background: var(--notice-bg);
+  border-bottom-color: var(--notice-border);
+  color: var(--notice-color);
+}
+
+html[data-theme="dark"] .app-overlay {
+  background: rgba(0, 0, 0, 0.78);
+}
+
+html[data-theme="dark"] .app-overlay-card {
+  background: var(--surface);
+}
+
+html[data-theme="dark"] .error-card .error-details pre {
+  background: var(--code-bg);
+  color: var(--code-color);
+}
+
+html[data-theme="dark"] .meta-grid dt {
+  color: var(--text-secondary);
+}
+
+html[data-theme="dark"] .meta-stats .stat {
+  background: var(--meta-stat-bg);
+  border-color: var(--border);
+}
+
+html[data-theme="dark"] .meta-stats .stat .lbl {
+  color: var(--text-secondary);
+}
+
+/* ---------- theme toggle button ---------- */
+#btn-theme {
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 8px;
 }
 
 /* ---------- responsive: collapse properties panel on narrow screens ---------- */

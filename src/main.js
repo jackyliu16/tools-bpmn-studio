@@ -32,6 +32,7 @@ import 'bpmn-js-token-simulation/assets/css/bpmn-js-token-simulation.css';
 import 'diagram-js-minimap/assets/diagram-js-minimap.css';
 
 import './style.css';
+import './dark-theme.css';
 
 // --- libraries ------------------------------------------------------------
 import BpmnModeler from 'bpmn-js/lib/Modeler';
@@ -140,7 +141,62 @@ let editorMode = 'bpmn';  // 'bpmn' | 'dmn'
 let dmnModeler = null;
 let currentDmnView = 'drd'; // 'drd' | 'decisionTable' | 'literalExpression'
 
+// --- theme state ---------------------------------------------------------
+const THEME_KEY = 'bpmn-studio-theme';
+const $html = document.documentElement;
+
 const studio = window.bpmnStudio || null;
+
+// --- theme helpers -------------------------------------------------------
+function getStoredTheme() {
+  try { return localStorage.getItem(THEME_KEY); } catch { return null; }
+}
+
+function storeTheme(theme) {
+  try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
+}
+
+function applyTheme(theme) {
+  if (theme === 'dark' || theme === 'light') {
+    $html.setAttribute('data-theme', theme);
+  } else {
+    // auto: follow system preference
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    $html.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+  }
+  updateThemeButton();
+}
+
+function currentTheme() {
+  return $html.getAttribute('data-theme') || 'light';
+}
+
+function toggleTheme() {
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  $html.setAttribute('data-theme', next);
+  storeTheme(next);
+  updateThemeButton();
+  setStatus(next === 'dark' ? '已切换到深色主题' : '已切换到浅色主题');
+}
+
+function updateThemeButton() {
+  const btn = $('#btn-theme');
+  if (!btn) return;
+  const dark = currentTheme() === 'dark';
+  btn.textContent = dark ? '☀️' : '🌙';
+  btn.title = dark ? '切换到浅色主题 (Ctrl+Shift+D)' : '切换到深色主题 (Ctrl+Shift+D)';
+  btn.classList.toggle('active', dark);
+}
+
+// Apply stored or system theme on startup
+applyTheme(getStoredTheme() || 'auto');
+
+// Listen for system theme changes when in auto mode
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (!getStoredTheme()) applyTheme('auto');
+  });
+}
 
 // --- big error / notice overlay -------------------------------------------------
 let lastError = null;
@@ -1644,6 +1700,7 @@ async function copyDiagnosticInfo() {
 }
 
 $('#btn-diagnostic').addEventListener('click', copyDiagnosticInfo);
+$('#btn-theme').addEventListener('click', toggleTheme);
 
 // browser file open fallback
 els.fileInput.addEventListener('change', async () => {
@@ -1741,6 +1798,7 @@ if (studio) {
       case 'toggle-simulate': return toggleSimulation();
       case 'search': return openSearch();
       case 'file-info': return openMetadataDialog();
+      case 'toggle-theme': return toggleTheme();
     }
   });
 }
@@ -1763,6 +1821,7 @@ document.addEventListener('keydown', (e) => {
     e.shiftKey ? exportSVG() : saveFile(false);
   } else if (k === 'p' && e.shiftKey) { e.preventDefault(); exportPNG(); }
   else if (k === 'f') { e.preventDefault(); openSearch(); }
+  else if (k === 'd' && e.shiftKey) { e.preventDefault(); toggleTheme(); }
   else if (k === 'z') {
     e.preventDefault();
     if (editorMode === 'dmn' && dmnModeler) {
