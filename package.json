@@ -1,0 +1,83 @@
+{
+  "name": "bpmn-studio",
+  "version": "0.1.2",
+  "description": "A nearly full-featured, standalone BPMN 2.0 editor — run in any browser (npm) or as a packaged desktop app (Electron).",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "author": {
+    "name": "bpmn-studio",
+    "email": "dev@bpmn-studio.local"
+  },
+  "homepage": "https://github.com/bpmn-studio/bpmn-studio",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run lint:pack && vite build",
+    "preview": "vite preview",
+    "serve": "vite preview --host --port 4173",
+    "electron:dev": "npm run build && electron .",
+    "lint:pack": "bpmnlint-pack-config -c .bpmnlintrc -o src/lint-config.js -t es",
+    "test:smoke": "vite-node scripts/smoke.mjs",
+    "dist": "npm run build && electron-builder --linux",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:win": "npm run build && electron-builder --win",
+    "icon": "node scripts/make-icon.mjs",
+    "test:ui": "vite-node --config scripts/ui.vite.config.mjs scripts/ui-harness.mjs"
+  },
+  "dependencies": {
+    "@bpmn-io/properties-panel": "^3.52.0",
+    "bpmn-js": "18.25.1",
+    "bpmn-js-bpmnlint": "^0.24.0",
+    "bpmn-js-color-picker": "^0.7.2",
+    "bpmn-js-properties-panel": "^5.65.0",
+    "bpmn-js-token-simulation": "^0.40.0",
+    "bpmnlint": "^11.13.0",
+    "bpmnlint-plugin-camunda": "^0.6.1",
+    "camunda-bpmn-moddle": "^8.0.1",
+    "diagram-js-minimap": "^5.4.1",
+    "min-dash": "^5.1.0",
+    "zeebe-bpmn-moddle": "^1.18.0"
+  },
+  "devDependencies": {
+    "bpmnlint-pack-config": "^0.9.0",
+    "css.escape": "^1.5.1",
+    "electron": "29.4.6",
+    "electron-builder": "^26.15.7",
+    "jsdom": "^26.1.0",
+    "tsx": "^4.23.12",
+    "vite": "^8.2.2",
+    "vite-node": "^6.0.0"
+  },
+  "build": {
+    "appId": "io.bpmn.studio",
+    "productName": "BPMN Studio",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/main.cjs",
+      "electron/preload.cjs",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
+      ],
+      "category": "Office",
+      "icon": "resources/icon.png",
+      "maintainer": "bpmn-studio <dev@bpmn-studio.local>"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "resources/icon.png"
+    }
+  }
+}

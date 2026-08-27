@@ -1,0 +1,515 @@
+/* bpmn-studio app shell */
+
+:root {
+  --topbar-h: 46px;
+  --statusbar-h: 26px;
+  --panel-w: 320px;
+  --accent: #1fb6ff;
+  --accent-dark: #0e8fd0;
+  --bg: #f6f7f9;
+  --border: #d7dbe0;
+  --text: #2c3e50;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.hidden { display: none !important; }
+
+/* ---------- top bar ---------- */
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--topbar-h);
+  padding: 0 12px;
+  background: #ffffff;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+#topbar .brand {
+  font-weight: 700;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+}
+
+#topbar .brand .logo { color: var(--accent); font-size: 18px; }
+
+#topbar .group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#topbar .group .sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 6px;
+}
+
+#topbar .diagram-meta {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+  color: #6b7683;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#topbar .diagram-meta #dirty { color: #e67e22; margin-left: 2px; }
+
+.tool {
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.tool:hover { background: #eef3f7; border-color: var(--border); }
+
+.tool.active {
+  background: #e6f6ff;
+  border-color: var(--accent);
+  color: var(--accent-dark);
+}
+
+/* ---------- main area ---------- */
+#main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+
+#js-canvas {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+/* canvas drop hint */
+#js-canvas[data-dragging="true"] {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+/* ---------- properties panel ---------- */
+#js-properties-panel {
+  width: var(--panel-w);
+  flex: 0 0 auto;
+  border-left: 1px solid var(--border);
+  background: #ffffff;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#js-properties-panel .bio-properties-panel {
+  font-size: 13px;
+}
+
+#js-properties-panel .bio-properties-panel-header {
+  background: #f2f5f7;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ---------- lint panel ---------- */
+#lint-panel {
+  flex: 0 0 auto;
+  max-height: 160px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  background: #fffdf5;
+}
+
+#lint-panel .lint-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: #fbf4d9;
+  border-bottom: 1px solid #ecd9a0;
+  font-size: 13px;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+
+#lint-panel .lint-header #lint-summary { font-weight: 400; color: #8a6d1d; }
+
+#lint-panel .lint-header .tool { margin-left: auto; padding: 2px 8px; }
+
+#lint-list {
+  margin: 0;
+  padding: 6px 12px 10px 32px;
+  font-size: 13px;
+}
+
+#lint-list li { margin: 2px 0; }
+
+/* ---------- status bar ---------- */
+#statusbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: var(--statusbar-h);
+  padding: 0 12px;
+  background: #ffffff;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: #6b7683;
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+/* ---------- minimap tweaks ----------
+ * IMPORTANT: the package default sets `top: 20px`; adding only `bottom`
+ * would leave BOTH top+bottom set → the absolutely-positioned container
+ * stretches to (nearly) full canvas height. When closed the inner `.map`
+ * is hidden but the stretched, semi-transparent, z-175 container remains,
+ * painting a residual box and blocking canvas interaction. We fully
+ * override the corner and collapse the closed state.
+ */
+.djs-minimap {
+  top: auto;
+  left: auto;
+  right: 12px;
+  bottom: 12px;
+  border-radius: 4px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
+}
+
+/* closed minimap: only the tiny reopen toggle remains, nothing else */
+.djs-minimap:not(.open) {
+  pointer-events: none;
+  background-color: rgba(255, 255, 255, 0.95);
+}
+
+.djs-minimap:not(.open) .toggle {
+  pointer-events: auto;
+}
+
+/* ---------- zoom display ---------- */
+#zoom-level {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  color: #6b7683;
+}
+
+/* ---------- token simulation ---------- */
+.tjs-container { z-index: 20; }
+
+/* ---------- XML view panel ---------- */
+#xml-panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  height: 240px;
+  min-height: 120px;
+  border-top: 1px solid var(--border);
+  background: #1e2430;
+}
+
+#xml-panel .xml-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 12px;
+  background: #2a3140;
+  color: #cfd6e0;
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+
+#xml-panel .xml-title { font-weight: 700; }
+
+#xml-panel .xml-status {
+  color: #8fa0b8;
+  font-size: 12px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#xml-panel .xml-autoscroll {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #aebad0;
+  cursor: pointer;
+}
+
+#xml-panel .xml-header .tool {
+  color: #cfd6e0;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+#xml-panel .xml-header .tool:hover { background: #3a4356; }
+
+#xml-viewer {
+  flex: 1 1 0;
+  margin: 0;
+  padding: 10px 14px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #e8ecf2;
+  tab-size: 2;
+}
+
+#xml-code { white-space: pre; }
+
+#xml-code.xml-editable {
+  cursor: text;
+  outline: 1px solid #3a4356;
+  border-radius: 2px;
+}
+
+/* syntax colors */
+.xml-punc  { color: #7f8fa8; }
+.xml-tag   { color: #79b8ff; }
+.xml-attr  { color: #ffab70; }
+.xml-str   { color: #9ece6a; }
+.xml-comment { color: #6b7683; font-style: italic; }
+.xml-pi    { color: #b392f0; }
+
+/* selection highlight: semantic element + its DI counterpart */
+mark.xml-match {
+  background: rgba(255, 213, 79, 0.85);
+  color: #1a1a1a;
+  border-radius: 2px;
+  padding: 0;
+  outline: 1px solid #e0a800;
+}
+
+mark.xml-match.di {
+  background: rgba(91, 192, 255, 0.75);
+  color: #10151c;
+  outline-color: #2b9bd8;
+}
+
+mark.xml-match.current {
+  outline-width: 2px;
+}
+
+/* ---------- notice bar (non-fatal warnings) ---------- */
+#notice-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: #fff7e0;
+  border-bottom: 1px solid #ecd9a0;
+  color: #7a5b0f;
+  font-size: 13px;
+}
+
+#notice-bar .tool { margin-left: auto; }
+#notice-bar .tool:nth-child(2) { margin-left: auto; }
+
+/* ---------- overlay (error / info modal) ---------- */
+.app-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 16, 24, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.app-overlay-card {
+  width: min(780px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35);
+  padding: 28px 32px;
+  font-size: 14px;
+}
+
+/* ---------- big error card ---------- */
+.error-card { border-top: 6px solid #e74c3c; text-align: center; }
+
+.error-card .error-icon { font-size: 52px; line-height: 1; margin-bottom: 8px; }
+
+.error-card #error-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #c0392b;
+  margin: 6px 0 12px;
+}
+
+.error-card .error-message {
+  font-size: 16px;
+  line-height: 1.6;
+  color: #2c3e50;
+  background: #fdf2f2;
+  border: 1px solid #f5c6c6;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 0 0 14px;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.error-card .error-details {
+  text-align: left;
+  margin-bottom: 18px;
+}
+
+.error-card .error-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: #6b7683;
+  padding: 6px 0;
+  user-select: none;
+}
+
+.error-card .error-details pre {
+  font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: #1e2430;
+  color: #e8ecf2;
+  border-radius: 8px;
+  padding: 14px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 8px 0 0;
+}
+
+.error-card .error-details ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: #8a6d1d;
+}
+
+.app-overlay-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.tool.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+  padding: 8px 22px;
+}
+
+.tool.primary:hover { background: var(--accent-dark); }
+
+/* ---------- info (metadata) modal ---------- */
+.info-card { border-top: 6px solid var(--accent); }
+
+.info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.info-header h2 { font-size: 18px; margin: 0; }
+
+.info-content { text-align: left; }
+
+.info-section { margin-bottom: 18px; }
+
+.info-section h3 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-dark);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+  margin: 0 0 10px;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  row-gap: 6px;
+  column-gap: 14px;
+  font-size: 13.5px;
+}
+
+.meta-grid dt {
+  color: #6b7683;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-grid dd {
+  margin: 0;
+  word-break: break-all;
+  font-weight: 500;
+}
+
+.meta-grid dd.mono { font-family: ui-monospace, Consolas, Menlo, monospace; font-size: 12.5px; }
+
+.meta-stats { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.meta-stats .stat {
+  background: #f2f6fa;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-width: 84px;
+  text-align: center;
+}
+
+.meta-stats .stat .num { font-size: 20px; font-weight: 700; color: var(--accent-dark); }
+
+.meta-stats .stat .lbl { font-size: 12px; color: #6b7683; }
+
+/* ---------- responsive: collapse properties panel on narrow screens ---------- */
+@media (max-width: 900px) {
+  #js-properties-panel { width: 260px; }
+  #topbar .brand { display: none; }
+}

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BPMN Studio</title>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="brand" title="BPMN Studio — 独立 BPMN 2.0 建模器">
+        <span class="logo">◉</span> BPMN Studio
+      </div>
+
+      <div class="group file">
+        <button id="btn-new" class="tool" title="新建 (Ctrl+N)">新建</button>
+        <button id="btn-open" class="tool" title="打开文件 (Ctrl+O)">打开…</button>
+        <button id="btn-save" class="tool" title="保存 (Ctrl+S)">保存</button>
+        <span class="sep"></span>
+        <button id="btn-export-svg" class="tool" title="导出 SVG (Ctrl+Shift+S)">SVG</button>
+        <button id="btn-export-png" class="tool" title="导出 PNG (Ctrl+Shift+P)">PNG</button>
+        <span class="sep"></span>
+        <button id="btn-info" class="tool" title="查看当前 BPMN 文件与图表元数据">ⓘ 元数据</button>
+      </div>
+
+      <div class="diagram-meta">
+        <span id="diagram-name">untitled.bpmn</span><span id="dirty" class="hidden">*</span>
+      </div>
+
+      <div class="group view">
+        <button id="btn-undo" class="tool" title="撤销 (Ctrl+Z)">↶</button>
+        <button id="btn-redo" class="tool" title="重做 (Ctrl+Y)">↷</button>
+        <span class="sep"></span>
+        <button id="btn-zoom-out" class="tool" title="缩小">−</button>
+        <span id="zoom-level">100%</span>
+        <button id="btn-zoom-in" class="tool" title="放大">+</button>
+        <button id="btn-zoom-fit" class="tool" title="适应画布">⤢</button>
+        <span class="sep"></span>
+        <button id="btn-search" class="tool" title="搜索元素">🔍</button>
+        <button id="btn-minimap" class="tool active" title="切换小地图">🗺</button>
+        <span class="sep"></span>
+        <button id="btn-xml" class="tool" title="查看当前图表的完整 XML，选中节点时高亮对应段落">XML</button>
+      </div>
+
+      <div class="group mode">
+        <button id="btn-simulate" class="tool" title="开始/停止 令牌模拟">▶ 模拟</button>
+        <button id="btn-lint" class="tool active" title="切换模型校验面板">✔ 校验</button>
+      </div>
+    </header>
+
+    <div id="notice-bar" class="notice hidden">
+      <span id="notice-text"></span>
+      <button id="btn-notice-details" class="tool" title="查看详细信息">详情…</button>
+      <button id="btn-notice-close" class="tool" title="关闭">×</button>
+    </div>
+
+    <div id="main">
+      <div id="js-canvas"></div>
+      <div id="js-properties-panel"></div>
+    </div>
+
+    <div id="lint-panel" class="hidden">
+      <div class="lint-header">
+        <span>模型校验 (bpmnlint)</span>
+        <span id="lint-summary"></span>
+        <button id="btn-lint-close" class="tool" title="关闭">×</button>
+      </div>
+      <ul id="lint-list"></ul>
+    </div>
+
+    <div id="xml-panel" class="hidden">
+      <div class="xml-header">
+        <span class="xml-title">XML 视图</span>
+        <span id="xml-status" class="xml-status"></span>
+        <label class="xml-autoscroll" title="选中节点时自动滚动到高亮位置">
+          <input type="checkbox" id="xml-autoscroll" checked /> 自动滚动
+        </label>
+        <button id="btn-xml-copy" class="tool" title="复制完整 XML 到剪贴板">复制 XML</button>
+        <button id="btn-xml-edit" class="tool" title="切换到编辑模式，修改 XML 后可重新导入模型">编辑</button>
+        <button id="btn-xml-apply" class="tool primary hidden" title="将编辑后的 XML 重新导入模型 (Ctrl+Enter)">应用修改</button>
+        <button id="btn-xml-revert" class="tool hidden" title="放弃编辑，恢复为当前模型内容">放弃</button>
+        <button id="btn-xml-close" class="tool" title="关闭">×</button>
+      </div>
+      <pre id="xml-viewer"><code id="xml-code"></code></pre>
+    </div>
+
+    <footer id="statusbar">
+      <span id="status-left">就绪 — 从左侧工具栏拖拽元素开始建模</span>
+      <span id="status-right"></span>
+    </footer>
+  </div>
+
+  <input type="file" id="file-input" accept=".bpmn,.xml,.txt" class="hidden" />
+
+  <!-- 大号错误 / 警告遮罩层 -->
+  <div id="error-overlay" class="app-overlay hidden">
+    <div class="app-overlay-card error-card" role="alertdialog" aria-labelledby="error-title">
+      <div class="error-icon">⚠️</div>
+      <h2 id="error-title">出错了</h2>
+      <p id="error-message" class="error-message"></p>
+      <details class="error-details">
+        <summary id="error-summary">详细错误信息</summary>
+        <pre id="error-stack"></pre>
+        <ul id="error-warnings" class="hidden"></ul>
+      </details>
+      <div class="app-overlay-actions">
+        <button id="btn-error-copy" class="tool">复制错误信息</button>
+        <button id="btn-error-close" class="tool primary">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 文件 / 图表元数据弹窗 -->
+  <div id="info-modal" class="app-overlay hidden">
+    <div class="app-overlay-card info-card" role="dialog" aria-labelledby="info-title">
+      <div class="info-header">
+        <h2 id="info-title">ⓘ 文件与图表元数据</h2>
+        <button id="btn-info-close" class="tool" title="关闭">×</button>
+      </div>
+      <div id="info-content" class="info-content"></div>
+      <div class="app-overlay-actions">
+        <button id="btn-info-refresh" class="tool">刷新</button>
+        <button id="btn-info-done" class="tool primary">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
