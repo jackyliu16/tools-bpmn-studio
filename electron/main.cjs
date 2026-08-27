@@ -17,6 +17,7 @@ function createWindow() {
     height: 920,
     minWidth: 940,
     minHeight: 560,
+    fullscreen: true,
     backgroundColor: '#f6f7f9',
     title: 'BPMN Studio',
     webPreferences: {
