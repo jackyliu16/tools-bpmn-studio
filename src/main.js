@@ -1017,9 +1017,32 @@ function bindModelerEvents(modeler) {
 }
 
 // --- lint ---------------------------------------------------------------------------
+/**
+ * Determine whether an element ID belongs to a bpmn-js DI label shape
+ * (e.g. "StartEvent_1_label", "EndEvent_1_label").
+ *
+ * bpmn-js registers these visual label wrappers inside the element
+ * registry with the **same** $type as the parent shape (bpmn:StartEvent,
+ * bpmn:EndEvent, …) but they have no incoming / outgoing sequence flows
+ * at the semantic level.  Lint rules that inspect incoming / outgoing
+ * therefore produce false positives ("Element is not connected",
+ * "Element is an implicit end", …).
+ *
+ * Filtering them out of the lint results keeps the panel clean without
+ * suppressing any real modelling issues.
+ */
+function isDiLabelElement(id) {
+  return typeof id === 'string' && id.endsWith('_label');
+}
+
 function renderLint(issues) {
   const counted = {};
   for (const id of Object.keys(issues || {})) {
+    // Skip bpmn-js DI label shapes — they are visual-only wrappers and
+    // have no semantic incoming / outgoing, so every connectivity rule
+    // would produce a false positive on them.
+    if (isDiLabelElement(id)) continue;
+
     for (const issue of issues[id] || []) {
       const key = issue.rule || 'unknown';
       counted[key] = (counted[key] || 0) + 1;
@@ -1147,6 +1170,125 @@ document.addEventListener('keydown', (e) => {
   else if (!els.infoModal.classList.contains('hidden')) hideInfoModal();
   else if (!els.noticeBar.classList.contains('hidden')) hideNotice();
 });
+
+// --- diagnostics (copy-to-clipboard) -------------------------------------------
+async function copyDiagnosticInfo() {
+  if (!bpmnModeler) return;
+
+  setStatus('正在收集诊断信息…');
+  const lines = [];
+
+  // ── basic info ──
+  lines.push('=== BPMN Studio Diagnostics ===');
+  lines.push(`Timestamp: ${new Date().toISOString()}`);
+  lines.push(`Platform: ${currentPlatform || 'unknown'}`);
+  lines.push(`File: ${currentFileName}`);
+  lines.push('');
+
+  // ── import warnings ──
+  try {
+    const { xml } = await bpmnModeler.saveXML({ format: true });
+    const { warnings: importWarnings } = await bpmnModeler.importXML(xml);
+    if (importWarnings.length) {
+      lines.push('--- Import Warnings ---');
+      importWarnings.forEach(w => lines.push(`  ${w.message || String(w)}`));
+      lines.push('');
+    }
+  } catch (err) {
+    lines.push(`--- Import Error --- ${err.message}`);
+    lines.push('');
+  }
+
+  // wait for linting to finish after re-import
+  let rawIssues = null;
+  try {
+    rawIssues = await new Promise(resolve => {
+      const timeout = setTimeout(() => resolve(null), 2000);
+      bpmnModeler.once('linting.completed', (ev) => {
+        clearTimeout(timeout);
+        resolve(ev.issues);
+      });
+      bpmnModeler.get('canvas').resized();
+    });
+  } catch { /* ignore */ }
+
+  // ── lint issues ──
+  if (rawIssues && Object.keys(rawIssues).length) {
+    const filteredIds = [];
+    const realIds = [];
+    for (const id of Object.keys(rawIssues)) {
+      (isDiLabelElement(id) ? filteredIds : realIds).push(id);
+    }
+
+    if (realIds.length) {
+      lines.push('--- Lint Issues ---');
+      for (const id of realIds) {
+        for (const issue of (rawIssues[id] || [])) {
+          lines.push(`  [${issue.severity || '?'}] ${id} — ${issue.rule || issue.id || '?'}: ${issue.message || issue.description || ''}`);
+        }
+      }
+      lines.push('');
+    }
+
+    if (filteredIds.length) {
+      lines.push(`(Suppressed ${filteredIds.length} DI label false-positives: ${filteredIds.join(', ')})`);
+      lines.push('');
+    }
+  } else {
+    lines.push('--- Lint Issues: none ✓ ---');
+    lines.push('');
+  }
+
+  // ── element registry ──
+  let elementCount = 0;
+  try {
+    const registry = bpmnModeler.get('elementRegistry');
+    const all = registry.getAll();
+    elementCount = all.length;
+    lines.push(`--- Element Registry (${all.length}) ---`);
+    const maxId = Math.max(6, ...all.map(e => e.id.length));
+    for (const el of all) {
+      const type = (el.businessObject?.$type || '?').replace('bpmn:', '');
+      const inStr = (el.incoming || []).map(e => e.id).join(', ');
+      const outStr = (el.outgoing || []).map(e => e.id).join(', ');
+      const conn = el.waypoints ? 'conn' : 'shape';
+      lines.push(`  ${el.id.padEnd(maxId + 2)} ${type.padEnd(20)} in=[${inStr}] out=[${outStr}] (${conn})`);
+    }
+    lines.push('');
+  } catch (err) {
+    lines.push(`--- Element Registry Error: ${err.message} ---`);
+    lines.push('');
+  }
+
+  // ── definitions ──
+  try {
+    const defs = bpmnModeler.getDefinitions();
+    lines.push('--- Definitions ---');
+    lines.push(`  id: ${defs.id}`);
+    lines.push(`  targetNamespace: ${defs.get('targetNamespace')}`);
+    lines.push(`  exporter: ${defs.get('exporter') || '(none)'}`);
+    lines.push(`  rootElements: ${(defs.rootElements || []).map(re => re.$type).join(', ')}`);
+  } catch (err) {
+    lines.push(`--- Definitions Error: ${err.message} ---`);
+  }
+
+  // ── copy to clipboard ──
+  const text = lines.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+
+  setStatus(`诊断信息已复制到剪贴板（${elementCount} 个元素）`);
+}
+
+$('#btn-diagnostic').addEventListener('click', copyDiagnosticInfo);
 
 // browser file open fallback
 els.fileInput.addEventListener('change', async () => {
