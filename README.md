@@ -1,6 +1,6 @@
 # BPMN Studio
 
-A nearly full-featured, standalone **BPMN 2.0 modeler** built on the [bpmn.io](https://bpmn.io) toolkit.
+A nearly full-featured, standalone **BPMN 2.0 / DMN editor** built on the [bpmn.io](https://bpmn.io) toolkit.
 It runs in two ways:
 
 1. **Web** — any machine with `npm` (or any static file server): `npm install && npm run build`
@@ -17,7 +17,7 @@ This project was designed after evaluating the four bpmn-related repositories ch
 | [`bpmn-js`](https://github.com/bpmn-io/bpmn-js) | 18.25.1 | BPMN 2.0 toolkit（渲染 + 建模引擎） | **核心引擎**。开箱即用提供调色板 palette、context pad、对齐/分布、复制粘贴、空格工具、网格吸附、子流程钻取、键盘快捷键、撤销/重做、**搜索**等完整建模能力（见 `lib/features` 与 `lib/Modeler.js` 的模块清单）。 |
 | [`bpmn-moddle`](https://github.com/bpmn-io/bpmn-moddle) | 10.2.0 | BPMN 2.0 XML ↔ JS 对象模型（读写 XML） | bpmn-js 的依赖，负责 `importXML` / `saveXML` 的所有 XML 解析与序列化。 |
 | [`bpmn-js-examples`](https://github.com/bpmn-io/bpmn-js-examples) | (main) | 27 个教学示例应用（每个都是独立 webpack 小程序） | **功能清单参考**。本项目综合了其中最相关的示例：`properties-panel`（属性面板）、`modeler`（基础建模器）、`minimap`、`i18n`、`theming`、`colors`、`overlays`、`custom-modeling-rules`、`deep-linking` 等。注意：这些示例只是"零件"，不是产品——必须自行组合。 |
-| [`dmn-js`](https://github.com/bpmn-io/dmn-js) | (main) | DMN 1.3 决策建模工具包（DRD / 决策表 / 表达式） | **未集成（后续扩展）**。与 BPMN 同源同构（`bpmn-moddle` 的姊妹 `dmn-moddle`），可作为本工作室的第二个模块加入。 |
+| [`dmn-js`](https://github.com/bpmn-io/dmn-js) | 17.10.2 | DMN 1.3/1.4 决策建模工具包（DRD / 决策表 / 文字表达式） | **已集成**。作为第二个编辑器模块，支持 `.dmn` 文件自动识别与切换，提供 DRD / Decision Table / Literal Expression 三种视图。 |
 
 ### 评估结论
 
@@ -33,6 +33,7 @@ This project was designed after evaluating the four bpmn-related repositories ch
   - **小地图**（`diagram-js-minimap`）、**着色**（`bpmn-js-color-picker`，BPMN in Color 序列化）
   - 文件：新建 / 打开 / 拖放 / 保存 / 导出 BPMN、SVG、PNG；脏标记与防抖保存
   - 桌面：原生菜单、原生打开/保存对话框、窗口标题脏标记
+  - **DMN 决策建模**（`dmn-js`）：`.dmn` 文件自动识别，DRD / Decision Table / Literal Expression 视图切换
 
 ---
 
@@ -52,9 +53,17 @@ This project was designed after evaluating the four bpmn-related repositories ch
 - bpmnlint 模型校验（问题面板，点击查看规则统计）
 - 令牌模拟：播放工作流，观察令牌流经路径
 
+**DMN 决策建模**
+- DRD（决策需求图）：拖拽决策、知识模型、输入数据、业务知识模型
+- Decision Table（决策表）：输入/输出列、规则行、命中策略
+- Literal Expression（文字表达式）：FEEL 表达式编辑
+- 视图切换：顶部工具栏 DRD / 决策表 / 文字表达式 一键切换
+- 自动识别：打开 `.dmn` 文件自动切换到 DMN 编辑器
+- 新建：菜单「新建 DMN 图」(`Ctrl+Shift+N`) 或打开 `.dmn` 文件自动进入
+
 **文件**
 - 新建 / 打开（原生对话框 or 浏览器文件选择）/ 拖放导入
-- 保存 `.bpmn`（原生另存为 or 下载）
+- 保存 `.bpmn` / `.dmn`（原生另存为 or 下载）
 - 导出 SVG / PNG
 - 脏标记（`*` 提示），未保存提示
 
@@ -70,7 +79,7 @@ This project was designed after evaluating the four bpmn-related repositories ch
 - **大号错误提示**：错误不再用 `alert()`，统一显示全屏半透明遮罩层的大卡片——大图标 + 大标题 + 大字号错误信息，
   可展开「详细错误信息」（堆栈 + 定位行/列），支持「复制错误信息」；打开/导入/保存/导出失败都会触发
 - 非致命导入警告显示为顶部黄色提示条，「详情…」可查看完整警告列表（含行/列）
-- 键盘快捷键：`Ctrl+N/O/S`、`Ctrl+Shift+S`（SVG）、`Ctrl+Shift+P`（PNG）、`Ctrl+F`（搜索）、`Ctrl+Alt+I`（元数据）、`Esc`（关闭弹层）
+- 键盘快捷键：`Ctrl+N`（BPMN）、`Ctrl+Shift+N`（DMN）、`Ctrl+O/S`、`Ctrl+Shift+S`（SVG）、`Ctrl+Shift+P`（PNG）、`Ctrl+F`（搜索）、`Ctrl+Alt+I`（元数据）、`Esc`（关闭弹层）
 
 ---
 ### 3.1 重要架构决策：按执行平台加载 moddle 扩展
@@ -111,7 +120,7 @@ npm run preview          # 本地预览 dist
 npm run serve            # 局域网可访问的静态服务
 
 # 渲染进程冒烟测试（Node + jsdom，无需浏览器/显示器）
-npm run test:smoke       # 验证 纯BPMN / Camunda 7 / Camunda 8 三种平台都能建模、导入导出
+npm run test:smoke       # 验证 纯BPMN / Camunda 7 / Camunda 8 / DMN 四种场景（44 项）
 ```
 
 `dist/` 是自包含静态站点：任何静态服务器（nginx、`npx serve`、GitHub Pages…）都能托管，
@@ -153,10 +162,12 @@ release/win-unpacked/                  # 免安装目录（可直接双击运行
 
 本项目在本机（NixOS 容器环境）完成了以下验证：
 
-- **渲染进程冒烟测试（27/27 通过）** — `npm run test:smoke`
+- **渲染进程冒烟测试（44/44 通过）** — `npm run test:smoke`
   - 纯 BPMN：导入零告警、渲染元素、8 个扩展服务（属性面板/小地图/校验/模拟/搜索/着色）全部可用、XML 往返
   - Camunda 7：`camunda:modelerTemplate` 属性读取与回写、`camundaPlatformPropertiesProvider` 注册
   - Camunda 8：`zeebe:taskDefinition` 读取与回写、`zeebePropertiesProvider` 注册
+  - DMN DRD：导入、DRD 视图渲染、Decision Table 视图切换、视图切换往返
+  - DMN 编辑器模块：`createDmnModeler` 导出、`EMPTY_DMN_XML` 模板、definitions 加载
   - bpmnlint 打包配置（`{ config, resolver }`）由 `bpmn-js-bpmnlint` 正确消费
   - 冒烟测试用 jsdom 在 Node 中运行真实模块（`vite-node`），不需要浏览器/显示器
 - **Web 构建与托管** — `vite build` 产出自包含 `dist/`（相对路径），`vite preview` + 静态服务器均 200
@@ -175,20 +186,22 @@ release/win-unpacked/                  # 免安装目录（可直接双击运行
 
 ```
 bpmn-studio/
-├── index.html               # 应用外壳（工具栏 / 画布 / 属性面板 / 校验面板 / 状态栏）
+├── index.html               # 应用外壳（工具栏 / 画布 / DMN 视图切换 / 属性面板 / 校验面板 / 状态栏）
 ├── vite.config.js           # base:'./' 以同时支持静态托管与 Electron file://
 ├── .bpmnlintrc              # bpmnlint 规则配置（recommended + camunda recommended）
 ├── resources/
 │   ├── newDiagram.bpmn      # 新图默认内容
 │   └── icon.png             # 应用图标（scripts/make-icon.mjs 生成）
 ├── src/
-│   ├── main.js              # 渲染进程入口：modeler 组装、工具栏、文件 IO、快捷键
+│   ├── main.js              # 渲染进程入口：BPMN/DMN 模式切换、modeler 组装、工具栏、文件 IO、快捷键
+│   ├── dmn-editor.js        # DMN 编辑器模块（dmn-js Modeler 封装、样式导入、模板）
 │   ├── style.css            # 应用外壳样式
 │   └── lint-config.js       # 由 `npm run lint:pack` 生成的打包校验配置
 ├── electron/
-│   ├── main.cjs             # Electron 主进程：窗口、原生菜单、文件对话框 IPC
+│   ├── main.cjs             # Electron 主进程：窗口、原生菜单、文件对话框 IPC（支持 .bpmn + .dmn）
 │   └── preload.cjs          # contextBridge 暴露 window.bpmnStudio
 └── scripts/
+    ├── smoke.mjs            # 冒烟测试（BPMN × 3 平台 + DMN × 3 场景，44 项）
     └── make-icon.mjs        # 纯 Node 生成 PNG 图标
 ```
 
@@ -225,7 +238,8 @@ Electron 集成方式：预加载脚本注入 `window.bpmnStudio`，渲染进程
 
 | 包 | 版本 | 作用 |
 | --- | --- | --- |
-| bpmn-js | 18.25.1 | 模型器核心 |
+| bpmn-js | 18.25.1 | BPMN 模型器核心 |
+| dmn-js | 17.10.2 | DMN 决策建模器（DRD / Decision Table / Literal Expression） |
 | bpmn-js-properties-panel / @bpmn-io/properties-panel | 5.65 / 3.52 | 属性面板 + provider |
 | camunda-bpmn-moddle / zeebe-bpmn-moddle | 8.0 / 1.18 | 执行属性 XML 扩展 |
 | diagram-js-minimap | 5.4 | 小地图 |
@@ -239,7 +253,7 @@ Electron 集成方式：预加载脚本注入 `window.bpmnStudio`，渲染进程
 
 ## 7. 后续扩展 (Roadmap)
 
-- [ ] 集成 **dmn-js** 作为决策建模模块（仓库已就绪）
+- [x] 集成 **dmn-js** 作为决策建模模块（v0.1.4）
 - [ ] **元素模板**（`bpmn-js-element-templates`）+ Camunda 模板 JSON schema
 - [ ] i18n（`bpmn-js-i18n`，界面中文化）
 - [ ] 主题切换（浅色/深色，参考 `bpmn-js-examples/theming`）
