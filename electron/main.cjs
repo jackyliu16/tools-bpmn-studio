@@ -17,7 +17,6 @@ function createWindow() {
     height: 920,
     minWidth: 940,
     minHeight: 560,
-    fullscreen: true,
     backgroundColor: '#f6f7f9',
     title: 'BPMN Studio',
     webPreferences: {
@@ -27,6 +26,10 @@ function createWindow() {
       sandbox: true
     }
   });
+
+  // Start maximized so the window fills the screen on launch,
+  // but keeps the native title-bar for moving / resizing.
+  win.maximize();
 
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   return win;
