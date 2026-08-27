@@ -13,6 +13,10 @@ src/lint-config.js
 # Wine prefix (NSIS cross-build runtime artifact)
 .wineprefix/
 
+# Electron-builder local cache & temp build dir
+.electron-builder-cache/
+.electron-build-tmp/
+
 # Logs
 *.log
 
