@@ -42,7 +42,8 @@ function buildMenu() {
     {
       label: '文件',
       submenu: [
-        { label: '新建', accelerator: 'CmdOrCtrl+N', click: () => sendToFocused('new') },
+        { label: '新建 BPMN 图', accelerator: 'CmdOrCtrl+N', click: () => sendToFocused('new') },
+        { label: '新建 DMN 图', accelerator: 'CmdOrCtrl+Shift+N', click: () => sendToFocused('new-dmn') },
         { label: '打开…', accelerator: 'CmdOrCtrl+O', click: () => sendToFocused('open') },
         { type: 'separator' },
         { label: '保存', accelerator: 'CmdOrCtrl+S', click: () => sendToFocused('save') },
@@ -126,9 +127,11 @@ function buildMenu() {
 ipcMain.handle('dialog:open-diagram', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(win, {
-    title: '打开 BPMN 图表',
+    title: '打开图表',
     filters: [
-      { name: 'BPMN 文件', extensions: ['bpmn', 'xml'] },
+      { name: 'BPMN 文件', extensions: ['bpmn'] },
+      { name: 'DMN 文件', extensions: ['dmn'] },
+      { name: 'XML 文件', extensions: ['xml'] },
       { name: '所有文件', extensions: ['*'] }
     ],
     properties: ['openFile']
@@ -150,6 +153,7 @@ ipcMain.handle('dialog:save-diagram', async (event, payload) => {
     defaultPath: defaultPath || 'diagram.bpmn',
     filters: [
       { name: 'BPMN 文件', extensions: ['bpmn'] },
+      { name: 'DMN 文件', extensions: ['dmn'] },
       { name: 'XML 文件', extensions: ['xml'] }
     ]
   });

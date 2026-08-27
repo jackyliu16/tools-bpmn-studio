@@ -508,6 +508,24 @@ mark.xml-match.current {
 
 .meta-stats .stat .lbl { font-size: 12px; color: #6b7683; }
 
+/* ---------- DMN canvas ---------- */
+#js-dmn-canvas {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+/* ---------- DMN view tabs ---------- */
+.dmn-view-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  margin: 0 4px;
+}
+
 /* ---------- responsive: collapse properties panel on narrow screens ---------- */
 @media (max-width: 900px) {
   #js-properties-panel { width: 260px; }

@@ -57,6 +57,9 @@ import lintConfig from './lint-config.js';
 
 import initialDiagramXML from '../resources/newDiagram.bpmn?raw';
 
+// --- DMN editor -----------------------------------------------------------
+import { createDmnModeler, EMPTY_DMN_XML } from './dmn-editor.js';
+
 // --- DOM ------------------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
 
@@ -85,7 +88,12 @@ const els = {
   xmlStatus: $('#xml-status'),
   xmlCode: $('#xml-code'),
   xmlViewer: $('#xml-viewer'),
-  xmlAutoscroll: $('#xml-autoscroll')
+  xmlAutoscroll: $('#xml-autoscroll'),
+  dmnCanvas: $('#js-dmn-canvas'),
+  dmnViewTabs: $('#dmn-view-tabs'),
+  btnDmnDrd: $('#btn-dmn-drd'),
+  btnDmnDecisionTable: $('#btn-dmn-decision-table'),
+  btnDmnLiteralExpression: $('#btn-dmn-literal-expression')
 };
 
 // --- per-platform configuration ----------------------------------------------
@@ -126,6 +134,11 @@ let simulateMode = false;
 let xmlVisible = false;
 let xmlEditing = false;
 let currentXml = '';
+
+// --- DMN state -----------------------------------------------------------
+let editorMode = 'bpmn';  // 'bpmn' | 'dmn'
+let dmnModeler = null;
+let currentDmnView = 'drd'; // 'drd' | 'decisionTable' | 'literalExpression'
 
 const studio = window.bpmnStudio || null;
 
@@ -254,6 +267,121 @@ function destroyModeler() {
   simulateMode = false;
   $('#btn-simulate').textContent = '▶ 模拟';
   $('#btn-simulate').classList.remove('active');
+  editorMode = 'bpmn';
+}
+
+// --- DMN modeler lifecycle --------------------------------------------------
+function createDmnEditor() {
+  const modeler = createDmnModeler('#js-dmn-canvas');
+
+  bindDmnModelerEvents(modeler);
+  window.__dmnModeler = modeler;
+
+  els.dmnViewTabs.classList.remove('hidden');
+  setStatus('就绪（DMN 决策建模）— 从 DRD 视图开始建模');
+  return modeler;
+}
+
+function destroyDmnEditor() {
+  if (dmnModeler) {
+    try {
+      dmnModeler.destroy();
+    } catch (err) {
+      console.warn('destroy DMN modeler failed', err);
+    }
+    dmnModeler = null;
+  }
+  els.dmnCanvas.innerHTML = '';
+  els.dmnViewTabs.classList.add('hidden');
+  currentDmnView = 'drd';
+}
+
+function switchToDmnMode() {
+  if (editorMode === 'dmn') return;
+  destroyModeler();
+  editorMode = 'dmn';
+  els.canvas.classList.add('hidden');
+  els.dmnCanvas.classList.remove('hidden');
+  dmnModeler = createDmnEditor();
+}
+
+function switchToBpmnMode() {
+  if (editorMode === 'bpmn') return;
+  destroyDmnEditor();
+  editorMode = 'bpmn';
+  els.dmnCanvas.classList.add('hidden');
+  els.canvas.classList.remove('hidden');
+  els.dmnViewTabs.classList.add('hidden');
+}
+
+function bindDmnModelerEvents(modeler) {
+  modeler.on('import.done', () => {
+    if (dmnModeler !== modeler) return;
+    setStatus('DMN 导入完成');
+    updateDmnViewTabs();
+  });
+
+  modeler.on('view.switch', (event) => {
+    if (dmnModeler !== modeler) return;
+    const { activeView } = event;
+    if (activeView && activeView.type) {
+      currentDmnView = activeView.type;
+      updateDmnViewTabs();
+    }
+  });
+
+  modeler.on('selection.changed', (event) => {
+    if (dmnModeler !== modeler) return;
+    const element = event.newSelection && event.newSelection[0];
+    if (element) {
+      const type = (element.businessObject && element.businessObject.$type) || '';
+      els.statusRight.textContent = element.id ? `${element.id} (${type.replace('dmn:', '')})` : type.replace('dmn:', '');
+    } else {
+      els.statusRight.textContent = '';
+    }
+  });
+}
+
+/** Get a service from the DMN modeler's active viewer */
+function dmnGet(service) {
+  if (!dmnModeler) return null;
+  const viewer = dmnModeler.getActiveViewer();
+  return viewer ? viewer.get(service) : null;
+}
+
+function updateDmnViewTabs() {
+  const views = {
+    'drd': els.btnDmnDrd,
+    'decisionTable': els.btnDmnDecisionTable,
+    'literalExpression': els.btnDmnLiteralExpression
+  };
+  for (const [key, btn] of Object.entries(views)) {
+    btn.classList.toggle('active', key === currentDmnView);
+  }
+}
+
+async function switchDmnView(viewType) {
+  if (!dmnModeler) return;
+  try {
+    const views = dmnModeler.getViews();
+    const targetView = views.find(v => v.type === viewType);
+    if (targetView) {
+      await dmnModeler.open(targetView);
+    }
+  } catch (err) {
+    console.error('switch DMN view failed', err);
+    showError({
+      title: '切换视图失败',
+      message: err.message || String(err),
+      error: err
+    });
+  }
+}
+
+/** detect file type from extension */
+function detectFileType(name) {
+  if (/\.dmn$/i.test(name)) return 'dmn';
+  return 'bpmn';
 }
 
 /** ensure the modeler matches the diagram's execution platform */
@@ -266,8 +394,60 @@ function ensureModeler(xml) {
   return bpmnModeler;
 }
 
+/** ensure the correct editor mode is active for the given file type */
+function ensureEditorMode(fileType) {
+  if (fileType === 'dmn') {
+    switchToDmnMode();
+  } else {
+    switchToBpmnMode();
+  }
+}
+
 // --- diagram lifecycle -------------------------------------------------------
 async function setDiagram(xml, name, filePath) {
+  const fileType = detectFileType(name || filePath || '');
+  ensureEditorMode(fileType);
+
+  if (fileType === 'dmn') {
+    await setDmnDiagram(xml, name, filePath);
+  } else {
+    await setBpmnDiagram(xml, name, filePath);
+  }
+}
+
+async function setDmnDiagram(xml, name, filePath) {
+  let warnings;
+  try {
+    ({ warnings } = await dmnModeler.importXML(xml));
+  } catch (err) {
+    err.warnings = err.warnings || [];
+    throw err;
+  }
+
+  if (warnings && warnings.length) {
+    console.warn('DMN import warnings', warnings);
+    showNotice(`DMN 导入完成，但有 ${warnings.length} 条警告`, warnings);
+  } else {
+    hideNotice();
+  }
+
+  currentFileName = name || 'untitled.dmn';
+  currentFilePath = filePath || null;
+  lastSavedXML = null;
+  lastSavedAt = null;
+  isDirty = false;
+
+  updateTitle();
+
+  try {
+    const canvas = dmnGet('canvas');
+    if (canvas) canvas.zoom('fit-viewport', 'auto');
+  } catch { /* canvas may not be available in all views */ }
+
+  if (xmlVisible) refreshXmlView();
+}
+
+async function setBpmnDiagram(xml, name, filePath) {
   const modeler = ensureModeler(xml);
 
   let warnings;
@@ -316,6 +496,23 @@ async function createNewDiagram() {
   }
 }
 
+async function createNewDmnDiagram() {
+  stopSimulationIfNeeded();
+  try {
+    switchToDmnMode();
+    await setDmnDiagram(EMPTY_DMN_XML, 'untitled.dmn', null);
+    setStatus('新建设策图完成');
+  } catch (err) {
+    console.error(err);
+    showError({
+      title: '无法创建新决策图',
+      message: err.message || String(err),
+      error: err,
+      warningObjects: err.warnings || []
+    });
+  }
+}
+
 async function openDiagramContent(xml, name, filePath) {
   stopSimulationIfNeeded();
   try {
@@ -351,12 +548,21 @@ function basename(p) {
 async function saveFile(forceAs = false) {
   let xml;
   try {
-    ({ xml } = await bpmnModeler.saveXML({ format: true }));
+    if (editorMode === 'dmn' && dmnModeler) {
+      ({ xml } = await dmnModeler.saveXML({ format: true }));
+    } else if (bpmnModeler) {
+      ({ xml } = await bpmnModeler.saveXML({ format: true }));
+    } else {
+      return;
+    }
   } catch (err) {
     console.error(err);
     showError({ title: '导出 XML 失败', message: err.message || String(err), error: err });
     return;
   }
+
+  const ext = editorMode === 'dmn' ? '.dmn' : '.bpmn';
+  const mime = editorMode === 'dmn' ? 'application/dmn+xml' : 'application/bpmn20-xml';
 
   try {
     if (studio) {
@@ -371,7 +577,7 @@ async function saveFile(forceAs = false) {
       markSaved(xml);
       setStatus('已保存: ' + currentFilePath);
     } else {
-      downloadText(xml, currentFileName, 'application/bpmn20-xml');
+      downloadText(xml, currentFileName, mime);
       markSaved(xml);
     }
   } catch (err) {
@@ -382,11 +588,19 @@ async function saveFile(forceAs = false) {
 
 async function exportSVG() {
   try {
-    const { svg } = await bpmnModeler.saveSVG({ format: true });
-    if (studio) {
-      await studio.exportFile({ name: currentFileName.replace(/\.bpmn$/i, '') + '.svg', content: svg });
+    let svg;
+    if (editorMode === 'dmn' && dmnModeler) {
+      ({ svg } = await dmnModeler.saveSVG({ format: true }));
+    } else if (bpmnModeler) {
+      ({ svg } = await bpmnModeler.saveSVG({ format: true }));
     } else {
-      downloadText(svg, currentFileName.replace(/\.bpmn$/i, '') + '.svg', 'image/svg+xml');
+      return;
+    }
+    const baseName = currentFileName.replace(/\.(bpmn|dmn)$/i, '');
+    if (studio) {
+      await studio.exportFile({ name: baseName + '.svg', content: svg });
+    } else {
+      downloadText(svg, baseName + '.svg', 'image/svg+xml');
     }
     setStatus('已导出 SVG');
   } catch (err) {
@@ -397,7 +611,14 @@ async function exportSVG() {
 
 async function exportPNG() {
   try {
-    const { svg } = await bpmnModeler.saveSVG({ format: true });
+    let svg;
+    if (editorMode === 'dmn' && dmnModeler) {
+      ({ svg } = await dmnModeler.saveSVG({ format: true }));
+    } else if (bpmnModeler) {
+      ({ svg } = await bpmnModeler.saveSVG({ format: true }));
+    } else {
+      return;
+    }
 
     const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(svgBlob);
@@ -421,14 +642,15 @@ async function exportPNG() {
 
     const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
 
+    const baseName = currentFileName.replace(/\.(bpmn|dmn)$/i, '');
     if (studio) {
       const buffer = await pngBlob.arrayBuffer();
       await studio.exportFile({
-        name: currentFileName.replace(/\.bpmn$/i, '') + '.png',
+        name: baseName + '.png',
         buffer
       });
     } else {
-      downloadBlob(pngBlob, currentFileName.replace(/\.bpmn$/i, '') + '.png');
+      downloadBlob(pngBlob, baseName + '.png');
     }
     setStatus('已导出 PNG');
   } catch (err) {
@@ -621,6 +843,10 @@ async function collectMetadata() {
 }
 
 async function openMetadataDialog() {
+  if (editorMode === 'dmn') {
+    await openDmnMetadataDialog();
+    return;
+  }
   if (!bpmnModeler) return;
   const { file, doc, stats } = await collectMetadata();
 
@@ -670,6 +896,66 @@ async function openMetadataDialog() {
       typeSection.append(metaRow(type, count, true));
     }
     content.appendChild(typeSection);
+  }
+
+  els.infoModal.classList.remove('hidden');
+}
+
+async function openDmnMetadataDialog() {
+  if (!dmnModeler) return;
+
+  const content = els.infoContent;
+  content.innerHTML = '';
+
+  // --- file level ---
+  const fileSection = metaSection('文件信息');
+  fileSection.append(
+    metaRow('文件名', currentFileName, true),
+    metaRow('文件路径', currentFilePath || '（未保存 / 浏览器环境）', true),
+    metaRow('是否已修改', isDirty ? '是（有未保存的修改）' : '否'),
+    metaRow('保存时间', lastSavedAt ? lastSavedAt.toLocaleString() : '从未保存'),
+    metaRow('文件类型', 'DMN 决策模型')
+  );
+  content.appendChild(fileSection);
+
+  // --- document level ---
+  try {
+    const { xml } = await dmnModeler.saveXML({ format: true });
+    const defs = dmnModeler.getDefinitions();
+    if (defs) {
+      const docSection = metaSection('文档信息（dmn:Definitions）');
+      docSection.append(
+        metaRow('Definitions ID', defs.id || '—', true),
+        metaRow('命名空间', (defs.$attrs && defs.$attrs.targetNamespace) || '—', true),
+        metaRow('当前视图', currentDmnView)
+      );
+      content.appendChild(docSection);
+    }
+
+    // --- elements ---
+    const registry = dmnGet('elementRegistry');
+    if (registry) {
+      const all = registry.getAll();
+      const statSection = metaSection(`图表统计（共 ${all.length} 个元素）`);
+      const byType = {};
+      for (const el of all) {
+        const type = ((el.businessObject && el.businessObject.$type) || '').replace('dmn:', '');
+        if (type) byType[type] = (byType[type] || 0) + 1;
+      }
+      const wrap = document.createElement('div');
+      wrap.className = 'meta-stats';
+      wrap.append(metaStat(all.length, '总元素'));
+      statSection.appendChild(wrap);
+
+      for (const [type, count] of Object.entries(byType).sort((a, b) => b[1] - a[1])) {
+        statSection.append(metaRow(type, count, true));
+      }
+      content.appendChild(statSection);
+    }
+  } catch (err) {
+    const errSection = metaSection('错误');
+    errSection.append(metaRow('无法读取元数据', err.message || String(err)));
+    content.appendChild(errSection);
   }
 
   els.infoModal.classList.remove('hidden');
@@ -820,12 +1106,18 @@ function renderXmlView(spans) {
 }
 
 function getCurrentSelection() {
-  if (!bpmnModeler) return [];
   try {
-    return bpmnModeler.get('selection').get() || [];
+    if (editorMode === 'dmn' && dmnModeler) {
+      const selection = dmnGet('selection');
+      return selection ? (selection.get() || []) : [];
+    }
+    if (bpmnModeler) {
+      return bpmnModeler.get('selection').get() || [];
+    }
   } catch {
     return [];
   }
+  return [];
 }
 
 function applyXmlSelection(selection) {
@@ -860,9 +1152,16 @@ function applyXmlSelection(selection) {
 }
 
 async function refreshXmlView() {
-  if (!bpmnModeler || !xmlVisible || xmlEditing) return;
+  if (!xmlVisible || xmlEditing) return;
+  if (editorMode === 'dmn' && !dmnModeler) return;
+  if (editorMode === 'bpmn' && !bpmnModeler) return;
   try {
-    const { xml } = await bpmnModeler.saveXML({ format: true });
+    let xml;
+    if (editorMode === 'dmn' && dmnModeler) {
+      ({ xml } = await dmnModeler.saveXML({ format: true }));
+    } else {
+      ({ xml } = await bpmnModeler.saveXML({ format: true }));
+    }
     currentXml = xml;
     applyXmlSelection(getCurrentSelection());
   } catch (err) {
@@ -1172,7 +1471,63 @@ document.addEventListener('keydown', (e) => {
 });
 
 // --- diagnostics (copy-to-clipboard) -------------------------------------------
+async function copyDmnDiagnosticInfo() {
+  if (!dmnModeler) return;
+
+  setStatus('正在收集 DMN 诊断信息…');
+  const lines = [];
+
+  lines.push('=== DMN Studio Diagnostics ===');
+  lines.push(`Timestamp: ${new Date().toISOString()}`);
+  lines.push(`Mode: DMN`);
+  lines.push(`File: ${currentFileName}`);
+  lines.push(`Current View: ${currentDmnView}`);
+  lines.push('');
+
+  try {
+    const { xml } = await dmnModeler.saveXML({ format: true });
+    lines.push('--- XML Length ---');
+    lines.push(`  ${xml.length} characters`);
+    lines.push('');
+  } catch (err) {
+    lines.push(`--- XML Error --- ${err.message}`);
+    lines.push('');
+  }
+
+  try {
+    const registry = dmnGet('elementRegistry');
+    const all = registry ? registry.getAll() : [];
+    lines.push(`--- Element Registry (${all.length}) ---`);
+    for (const el of all) {
+      const type = (el.businessObject?.$type || '?').replace('dmn:', '');
+      lines.push(`  ${el.id || '(no id)'} — ${type}`);
+    }
+    lines.push('');
+  } catch (err) {
+    lines.push(`--- Element Registry Error: ${err.message} ---`);
+    lines.push('');
+  }
+
+  const text = lines.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+
+  setStatus('DMN 诊断信息已复制到剪贴板');
+}
+
 async function copyDiagnosticInfo() {
+  if (editorMode === 'dmn') {
+    await copyDmnDiagnosticInfo();
+    return;
+  }
   if (!bpmnModeler) return;
 
   setStatus('正在收集诊断信息…');
@@ -1317,22 +1672,70 @@ els.canvas.addEventListener('drop', async (e) => {
   await openDiagramContent(content, file.name, null);
 });
 
+// --- DMN view tab wiring ---------------------------------------------------
+els.btnDmnDrd.addEventListener('click', () => switchDmnView('drd'));
+els.btnDmnDecisionTable.addEventListener('click', () => switchDmnView('decisionTable'));
+els.btnDmnLiteralExpression.addEventListener('click', () => switchDmnView('literalExpression'));
+
 // --- menu actions (Electron) ------------------------------------------------------------------
 if (studio) {
   studio.onMenu(async (action) => {
     switch (action) {
       case 'new': return createNewDiagram();
+      case 'new-dmn': return createNewDmnDiagram();
       case 'open': return openFile();
       case 'save': return saveFile(false);
       case 'save-as': return saveFile(true);
       case 'export-svg': return exportSVG();
       case 'export-png': return exportPNG();
-      case 'undo': return bpmnModeler && bpmnModeler.get('undo').undo();
-      case 'redo': return bpmnModeler && bpmnModeler.get('undo').redo();
-      case 'zoom-in': return bpmnModeler && bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 1.25);
-      case 'zoom-out': return bpmnModeler && bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 0.8);
-      case 'zoom-reset': return bpmnModeler && bpmnModeler.get('canvas').zoom(1, { x: 0, y: 0 });
-      case 'zoom-fit': return bpmnModeler && bpmnModeler.get('canvas').zoom('fit-viewport', 'auto');
+      case 'undo': {
+        if (editorMode === 'dmn' && dmnModeler) {
+          try { const u = dmnGet('undo'); if (u) u.undo(); } catch { /* ignore */ }
+        } else if (bpmnModeler) {
+          bpmnModeler.get('undo').undo();
+        }
+        return;
+      }
+      case 'redo': {
+        if (editorMode === 'dmn' && dmnModeler) {
+          try { const u = dmnGet('undo'); if (u) u.redo(); } catch { /* ignore */ }
+        } else if (bpmnModeler) {
+          bpmnModeler.get('undo').redo();
+        }
+        return;
+      }
+      case 'zoom-in': {
+        if (editorMode === 'dmn' && dmnModeler) {
+          try { const c = dmnGet('canvas'); if (c) c.zoom({ x: 0, y: 0 }, 1.25); } catch { /* ignore */ }
+        } else if (bpmnModeler) {
+          bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 1.25);
+        }
+        return;
+      }
+      case 'zoom-out': {
+        if (editorMode === 'dmn' && dmnModeler) {
+          try { const c = dmnGet('canvas'); if (c) c.zoom({ x: 0, y: 0 }, 0.8); } catch { /* ignore */ }
+        } else if (bpmnModeler) {
+          bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 0.8);
+        }
+        return;
+      }
+      case 'zoom-reset': {
+        if (editorMode === 'dmn' && dmnModeler) {
+          try { const c = dmnGet('canvas'); if (c) c.zoom(1, { x: 0, y: 0 }); } catch { /* ignore */ }
+        } else if (bpmnModeler) {
+          bpmnModeler.get('canvas').zoom(1, { x: 0, y: 0 });
+        }
+        return;
+      }
+      case 'zoom-fit': {
+        if (editorMode === 'dmn' && dmnModeler) {
+          try { const c = dmnGet('canvas'); if (c) c.zoom('fit-viewport', 'auto'); } catch { /* ignore */ }
+        } else if (bpmnModeler) {
+          bpmnModeler.get('canvas').zoom('fit-viewport', 'auto');
+        }
+        return;
+      }
       case 'toggle-minimap': return toggleMinimap();
       case 'toggle-lint': return toggleLintPanel();
       case 'toggle-simulate': return toggleSimulation();
@@ -1360,6 +1763,22 @@ document.addEventListener('keydown', (e) => {
     e.shiftKey ? exportSVG() : saveFile(false);
   } else if (k === 'p' && e.shiftKey) { e.preventDefault(); exportPNG(); }
   else if (k === 'f') { e.preventDefault(); openSearch(); }
+  else if (k === 'z') {
+    e.preventDefault();
+    if (editorMode === 'dmn' && dmnModeler) {
+      try { const u = dmnGet('undo'); if (u) { e.shiftKey ? u.redo() : u.undo(); } } catch { /* ignore */ }
+    } else if (bpmnModeler) {
+      e.shiftKey ? bpmnModeler.get('undo').redo() : bpmnModeler.get('undo').undo();
+    }
+  }
+  else if (k === 'y') {
+    e.preventDefault();
+    if (editorMode === 'dmn' && dmnModeler) {
+      try { const u = dmnGet('undo'); if (u) u.redo(); } catch { /* ignore */ }
+    } else if (bpmnModeler) {
+      bpmnModeler.get('undo').redo();
+    }
+  }
 });
 
 // --- boot ------------------------------------------------------------------------------------

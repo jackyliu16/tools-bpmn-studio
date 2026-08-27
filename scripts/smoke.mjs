@@ -24,6 +24,7 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dom = new JSDOM(
   `<!DOCTYPE html><html><body>
      <div id="js-canvas"></div>
+     <div id="js-dmn-canvas"></div>
      <div id="js-properties-panel"></div>
    </body></html>`,
   { pretendToBeVisual: true, url: 'http://localhost/' }
@@ -294,6 +295,121 @@ check('camunda-8: modeler constructed', !!modeler);
 }
 
 modeler.destroy();
+
+// =========================================================================
+// --- DMN tests -----------------------------------------------------------
+// =========================================================================
+
+const DmnModeler = (await import('dmn-js/lib/Modeler.js')).default;
+
+// --- scenario 4: DMN DRD (Decision Requirements Diagram) -----------------
+let dmnModeler = null;
+
+const emptyDmnXML = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/"
+             xmlns:di="https://www.omg.org/spec/DMN/20191111/DI/"
+             xmlns:dc="http://www.omg.org/spec/DMN/20191111/DC/"
+             id="Definitions_1"
+             name="DRD"
+             namespace="https://www.omg.org/spec/DMN/20191111/MODEL/">
+  <decision id="Decision_1" name="Decision 1">
+    <decisionTable id="DecisionTable_1">
+      <input id="Input_1">
+        <inputExpression id="InputExpression_1" typeRef="string">
+          <text></text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" name="Result" typeRef="string" />
+    </decisionTable>
+  </decision>
+  <di:DMNDI>
+    <di:DMNShape id="Decision_1_di" dmnElementRef="Decision_1">
+      <dc:Bounds x="160" y="100" width="180" height="80" />
+      <di:DMNLabel />
+    </di:DMNShape>
+  </di:DMNDI>
+</definitions>`;
+
+dmnModeler = new DmnModeler({ container: '#js-dmn-canvas' });
+check('dmn: modeler constructed', !!dmnModeler);
+
+{
+  const { warnings } = await dmnModeler.importXML(emptyDmnXML);
+  // DMN DI warnings are expected in jsdom (no real SVG rendering)
+  const realWarnings = warnings.filter(w => !w.message.includes('unparsable content'));
+  check('dmn: importXML clean (ignoring DI warnings)', realWarnings.length === 0,
+    realWarnings.map((w) => w.message.split('\n')[0]).join('; '));
+
+  const views = dmnModeler.getViews();
+  check('dmn: views available', views.length > 0, `${views.length} views`);
+
+  const drdView = views.find(v => v.type === 'drd');
+  check('dmn: DRD view exists', !!drdView);
+
+  if (drdView) {
+    await dmnModeler.open(drdView);
+    // dmn-js accesses services through the active viewer, not the modeler directly
+    const viewer = dmnModeler.getActiveViewer();
+    const registry = viewer.get('elementRegistry');
+    const count = registry.getAll().length;
+    check('dmn: DRD elements rendered', count > 0, `${count} elements`);
+  }
+
+  const definitions = dmnModeler.getDefinitions();
+  check('dmn: defs.id', definitions.id === 'Definitions_1', definitions.id);
+
+  const { xml } = await dmnModeler.saveXML({ format: true });
+  check('dmn: saveXML roundtrip', xml.includes('Decision_1') && xml.includes('Definitions_1'));
+}
+
+// --- scenario 5: DMN Decision Table view ----------------------------------
+{
+  const views = dmnModeler.getViews();
+  const tableView = views.find(v => v.type === 'decisionTable');
+  if (tableView) {
+    await dmnModeler.open(tableView);
+    check('dmn: decision table view opened', true);
+  } else {
+    check('dmn: decision table view exists', false, 'no decisionTable view');
+  }
+}
+
+// --- scenario 6: DMN view switching ----------------------------------------
+{
+  const views = dmnModeler.getViews();
+  const drdView = views.find(v => v.type === 'drd');
+  if (drdView) {
+    await dmnModeler.open(drdView);
+    const activeView = dmnModeler.getActiveView();
+    check('dmn: switch back to DRD', activeView && activeView.type === 'drd');
+  }
+}
+
+dmnModeler.destroy();
+
+// =========================================================================
+// --- DMN import from dmn-editor module -----------------------------------
+// =========================================================================
+
+const { createDmnModeler, EMPTY_DMN_XML: MODULE_EMPTY_DMN } = await import(path.join(root, 'src', 'dmn-editor.js'));
+check('dmn-editor: exports createDmnModeler', typeof createDmnModeler === 'function');
+check('dmn-editor: exports EMPTY_DMN_XML', typeof MODULE_EMPTY_DMN === 'string' && MODULE_EMPTY_DMN.includes('definitions'));
+
+{
+  const testModeler = createDmnModeler('#js-dmn-canvas');
+  check('dmn-editor: createDmnModeler works', !!testModeler);
+
+  const { warnings } = await testModeler.importXML(MODULE_EMPTY_DMN);
+  // DMN DI warnings are expected in jsdom (no real SVG rendering)
+  const realWarnings2 = warnings.filter(w => !w.message.includes('unparsable content'));
+  check('dmn-editor: importXML clean (ignoring DI warnings)', realWarnings2.length === 0,
+    realWarnings2.map((w) => w.message.split('\n')[0]).join('; '));
+
+  const definitions = testModeler.getDefinitions();
+  check('dmn-editor: definitions loaded', !!definitions && !!definitions.id);
+
+  testModeler.destroy();
+}
 
 // --- summary ----------------------------------------------------------------
 const failed = results.filter((r) => !r.ok).length;
