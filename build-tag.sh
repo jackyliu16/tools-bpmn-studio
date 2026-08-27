@@ -322,35 +322,90 @@ if [[ "$ELECTRON" == "true" ]]; then
   # 输出目录 (-c 覆盖 config)
   EB_ARGS+=("-c.directories.output=$EB_OUTPUT")
 
-  # NixOS: 如果关键二进制未补丁，先触发下载再替换
+  # 禁止自动发布到 GitHub（本地构建不需要）
+  EB_ARGS+=(--publish never)
+
+  # NixOS: 强制使用项目级缓存，预下载并预解压工具链
   if [[ "$IS_NIXOS" == "true" ]]; then
     EB_CACHE="$REPO_ROOT/.electron-builder-cache"
-    _need_phase1=false
+    export ELECTRON_BUILDER_CACHE="$EB_CACHE"
+    info "NixOS: ELECTRON_BUILDER_CACHE=$EB_CACHE"
 
-    # 检查 mksquashfs 是否可用（存在且可执行）
-    _mkfs_path="$(find "$EB_CACHE/appimage-"* -path "*/linux-x64/mksquashfs" -type f 2>/dev/null | head -1 || true)"
-    if [[ -z "$_mkfs_path" ]] || ! "$_mkfs_path" -help >/dev/null 2>&1; then
-      _need_phase1=true
+    EB_DL="$EB_CACHE/downloads"
+    EB_BINARIES_BASE="https://github.com/electron-userland/electron-builder-binaries/releases/download"
+
+    # ── 预处理7zip ──
+    if [[ -n "$NATIVE_7ZA" ]]; then
+      _7z_dir="$EB_CACHE/7zip@1.0.0/7zip-linux-x64-16wjr"
+      _7z_state="$EB_CACHE/7zip@1.0.0/7zip-linux-x64-16wjr.state"
+
+      # 下载并解压（如果缺失）
+      if [[ ! -f "$_7z_dir/bin/7za" ]] || ! "$_7z_dir/bin/7za" --help >/dev/null 2>&1; then
+        info "NixOS: 下载并解压7zip工具链..."
+        mkdir -p "$EB_DL/7zip@1.0.0" "$_7z_dir"
+        _7z_url="$EB_BINARIES_BASE/7zip@1.0.0/7zip-linux-x64.tar.gz"
+        curl -fsSL "$_7z_url" -o "$EB_DL/7zip@1.0.0/7zip-linux-x64.tar.gz" 2>/dev/null || \
+          wget -q "$_7z_url" -O "$EB_DL/7zip@1.0.0/7zip-linux-x64.tar.gz" 2>/dev/null || true
+        if [[ -f "$EB_DL/7zip@1.0.0/7zip-linux-x64.tar.gz" ]]; then
+          tar -xzf "$EB_DL/7zip@1.0.0/7zip-linux-x64.tar.gz" -C "$_7z_dir" --strip-components=0 2>/dev/null || true
+        fi
+      fi
+
+      # 用原生7za替换（无论是否刚下载）
+      if [[ -f "$_7z_dir/bin/7za" ]]; then
+        cp -f "$NATIVE_7ZA" "$_7z_dir/bin/7za" && info "NixOS: 7za → native" || true
+      else
+        mkdir -p "$_7z_dir/bin"
+        cat > "$_7z_dir/bin/7za" <<WRAPPER
+#!/bin/sh
+exec "$NATIVE_7ZA" "\$@"
+WRAPPER
+        chmod +x "$_7z_dir/bin/7za"
+        info "NixOS: 7za wrapper → $NATIVE_7ZA"
+      fi
+
+      # 关键：写 state 文件防止 electron-builder 重新下载
+      cat > "$_7z_state" <<'STATE'
+{"version":1,"state":"complete","timestamp":0,"fileCount":4,"extractedSize":2903181}
+STATE
     fi
 
-    if [[ "$_need_phase1" == "true" ]]; then
-      info "NixOS: 阶段 1 — 触发工具链下载..."
-      rm -rf "$EB_OUTPUT"/*
-      node node_modules/.bin/electron-builder "${EB_ARGS[@]}" 2>&1 | tail -3 || true
+    # ── 预处理 appimage 工具链 ──
+    _appimg_ver="12.0.1"
+    _appimg_dir="$EB_CACHE/appimage-$_appimg_ver"
+    _appimg_subdir="appimage-$_appimg_ver-qkv17"
+    _appimg_extracted="$_appimg_dir/$_appimg_subdir"
+    _appimg_state="$_appimg_dir/$_appimg_subdir.state"
 
-      # 替换下载的二进制
-      if [[ -n "$NATIVE_MKSQUASHFS" ]]; then
-        _target="$(find "$EB_CACHE/appimage-"* -path "*/linux-x64/mksquashfs" -type f 2>/dev/null | head -1 || true)"
-        [[ -n "$_target" ]] && cp -f "$NATIVE_MKSQUASHFS" "$_target" && info "已替换 mksquashfs" || true
+    # 下载并解压（如果缺失）
+    if [[ ! -d "$_appimg_extracted/linux-x64" ]]; then
+      info "NixOS: 下载并解压 appimage 工具链..."
+      mkdir -p "$EB_CACHE/downloads" "$_appimg_dir"
+      _appimg_url="$EB_BINARIES_BASE/appimage-$_appimg_ver/appimage-$_appimg_ver.7z"
+      _dl_hash="$(echo -n "$_appimg_url" | sha256sum | cut -d' ' -f1)"
+      _dl_dir="$EB_CACHE/downloads/$_dl_hash"
+      mkdir -p "$_dl_dir"
+      curl -fsSL "$_appimg_url" -o "$_dl_dir/appimage-$_appimg_ver.7z" 2>/dev/null || \
+        wget -q "$_appimg_url" -O "$_dl_dir/appimage-$_appimg_ver.7z" 2>/dev/null || true
+      if [[ -f "$_dl_dir/appimage-$_appimg_ver.7z" ]] && [[ -n "$NATIVE_7ZA" ]]; then
+        mkdir -p "$_appimg_extracted"
+        "$NATIVE_7ZA" x -bd -o"$_appimg_extracted" \
+          "$_dl_dir/appimage-$_appimg_ver.7z" -y >/dev/null 2>&1 || true
+        info "NixOS: appimage 工具链解压完成"
       fi
-      if [[ -n "$NATIVE_7ZA" ]]; then
-        _target="$(find "$EB_CACHE/7zip@1.0.0" -path "*/bin/7zz" -type f 2>/dev/null | head -1 || true)"
-        [[ -n "$_target" ]] && cp -f "$NATIVE_7ZA" "$_target" && info "已替换 7zz" || true
-      fi
-
-      info "NixOS: 阶段 2 — 使用原生工具重新构建..."
-      rm -rf "$EB_OUTPUT"/*
     fi
+
+    # 替换 mksquashfs（在解压之后）
+    if [[ -n "$NATIVE_MKSQUASHFS" ]]; then
+      while IFS= read -r _target; do
+        cp -f "$NATIVE_MKSQUASHFS" "$_target" && info "已替换 mksquashfs" || true
+      done < <(find "$EB_CACHE" -name "mksquashfs" -type f 2>/dev/null)
+    fi
+
+    # 关键：写 state = "complete" 防止 electron-builder 重新下载+解压
+    cat > "$_appimg_state" <<'STATE'
+{"version":1,"state":"complete","timestamp":0,"fileCount":1,"extractedSize":1}
+STATE
   fi
 
   # 交叉编译提示
