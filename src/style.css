@@ -249,6 +249,51 @@ html, body {
   color: var(--text-secondary);
 }
 
+/* ---------- compact zoom group ---------- */
+.zoom-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.zoom-group .zoom-btn {
+  padding: 3px 6px;
+  border: none;
+  border-radius: 0;
+  font-size: 13px;
+  min-width: 22px;
+  text-align: center;
+}
+
+.zoom-group .zoom-btn:hover {
+  background: var(--surface-hover);
+}
+
+.zoom-group .zoom-level {
+  min-width: 36px;
+  padding: 2px 4px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  background: var(--surface-alt);
+  cursor: default;
+  user-select: none;
+}
+
+.zoom-group .zoom-btn + .zoom-level {
+  border-left: 1px solid var(--border);
+}
+
+.zoom-group .zoom-level + .zoom-btn {
+  border-left: 1px solid var(--border);
+}
+
 /* ---------- token simulation ---------- */
 .tjs-container { z-index: 20; }
 
