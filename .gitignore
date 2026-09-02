@@ -29,3 +29,6 @@ Thumbs.db
 # .idea/
 # *.swp
 # *.swo__mmprobe.mjs
+
+# pi 工作区元数据（本地会话记忆，不随仓库分发）
+.pi/
