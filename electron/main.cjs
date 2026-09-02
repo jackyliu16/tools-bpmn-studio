@@ -187,6 +187,17 @@ ipcMain.handle('dialog:export-file', async (event, payload) => {
   return { path: result.filePath };
 });
 
+// --- IPC: app / runtime versions (for diagnostics) ------------------------------
+ipcMain.handle('app:versions', () => {
+  return {
+    app: app.getVersion(),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+    platform: process.platform
+  };
+});
+
 // --- IPC: file metadata (stat) --------------------------------------------------
 ipcMain.handle('file:stat', async (_event, filePath) => {
   try {

@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('bpmnStudio', {
     ipcRenderer.on('menu:action', (_event, action) => callback(action));
   },
 
+  /** @returns {Promise<{app, electron, chrome, node, platform} | null>} */
+  getVersions: () => ipcRenderer.invoke('app:versions'),
+
   /** update the native window title */
   setTitle: (title) => ipcRenderer.send('window:title', title)
 });

@@ -53,6 +53,119 @@ import BpmnColorPickerModule from 'bpmn-js-color-picker';
 import BpmnLintModule from 'bpmn-js-bpmnlint';
 import TokenSimulationModule from 'bpmn-js-token-simulation';
 
+// package versions (reported by the diagnostics clipboard payload)
+import bpmnJsPkg from 'bpmn-js/package.json';
+import bpmnJsBpmnlintPkg from 'bpmn-js-bpmnlint/package.json';
+import bpmnlintPkg from 'bpmnlint/package.json';
+
+// ---------------------------------------------------------------------------
+// Pre-modeler patch: suppress DI-label false-positives from bpmn-js-bpmnlint
+// ---------------------------------------------------------------------------
+// bpmn-js registers label wrappers (e.g. "StartEvent_1_label") in the
+// element registry with the same $type as the parent shape but without
+// any semantic incoming / outgoing.  The bpmn-lint rules therefore produce
+// false-positive reports on these visual-only wrappers.
+//
+// We must patch the Linting *prototype* before any BpmnModeler is created,
+// because the constructor fires diagram.init → linting.configChanged →
+// update() synchronously during new BpmnModeler().  A post-construction
+// instance-level patch arrives too late to prevent the first overlay pass.
+{
+  const LintingClass = BpmnLintModule.linting[1];
+
+  if (LintingClass && LintingClass.prototype) {
+
+    // Patch _formatIssues: strip DI-label entries from the result so that
+    // this._issues (button badge count) never includes false positives.
+    const origFormatIssues = LintingClass.prototype._formatIssues;
+    if (typeof origFormatIssues === 'function') {
+      LintingClass.prototype._formatIssues = function patchedFormatIssues(issues) {
+        const result = origFormatIssues.call(this, issues);
+        const filtered = {};
+        for (const id in result) {
+          if (typeof id !== 'string' || !id.endsWith('_label')) {
+            filtered[id] = result[id];
+          }
+        }
+        return filtered;
+      };
+    }
+
+    // Patch _createIssues: belt-and-suspenders guard so overlay creation
+    // never sees DI-label element IDs even if _formatIssues was somehow
+    // bypassed.
+    const origCreateIssues = LintingClass.prototype._createIssues;
+    if (typeof origCreateIssues === 'function') {
+      LintingClass.prototype._createIssues = function patchedCreateIssues(issues) {
+        const filtered = {};
+        for (const id in issues) {
+          if (typeof id !== 'string' || !id.endsWith('_label')) {
+            filtered[id] = issues[id];
+          }
+        }
+        return origCreateIssues.call(this, filtered);
+      };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Post-parse fix: rebuild FlowNode.incoming/outgoing back-references
+// ---------------------------------------------------------------------------
+// BPMN exporters encode sequence-flow endpoints only via sourceRef/targetRef
+// and omit the derived FlowNode.incoming/outgoing elements.  The current
+// moddle stack (bpmn-moddle 10 / moddle-xml 12) does not re-derive them while
+// parsing, so they stay `undefined` after importXML — which makes every
+// connectivity rule in bpmnlint (no-disconnected, no-implicit-start,
+// no-implicit-end) report a false positive on every flow node of every
+// diagram.
+//
+// We rebuild them from sourceRef/targetRef after XML parsing
+// (import.parse.complete) and after structural model changes
+// (elements.changed), so the lint rules see the same connectivity as the
+// diagram itself.  Rebuilding is idempotent: it resets the arrays and
+// repopulates them from the flow references.  Verified: with the
+// back-references populated the false positives vanish while genuinely
+// disconnected elements are still detected (scripts/check-backref-fix.mjs).
+function rebuildFlowNodeBackrefs(definitions) {
+  if (!definitions) return;
+
+  const rebuildContainer = (container) => {
+    const flowElements = container.flowElements || [];
+
+    // reset the back-references of this container's direct flow nodes
+    for (const fe of flowElements) {
+      if (fe.$instanceOf && fe.$instanceOf('bpmn:FlowNode')) {
+        fe.incoming = [];
+        fe.outgoing = [];
+      }
+    }
+
+    // repopulate them from the flow reference attributes
+    for (const fe of flowElements) {
+      if (fe.$type !== 'bpmn:SequenceFlow' && fe.$type !== 'bpmn:MessageFlow') continue;
+      const source = fe.sourceRef;
+      const target = fe.targetRef;
+      if (source && Array.isArray(source.outgoing)) source.outgoing.push(fe);
+      if (target && Array.isArray(target.incoming)) target.incoming.push(fe);
+    }
+
+    // recurse into nested containers (sub-processes)
+    for (const fe of flowElements) {
+      if (fe.flowElements) rebuildContainer(fe);
+    }
+  };
+
+  for (const re of definitions.rootElements || []) {
+    if (re.processRef) {
+      // Participant (and other reference-based root elements)
+      rebuildContainer(re.processRef);
+    } else if (re.$type === 'bpmn:Process') {
+      rebuildContainer(re);
+    }
+  }
+}
+
 // packed by `npm run lint:pack` (bpmnlint-pack-config)
 import lintConfig from './lint-config.js';
 
@@ -1344,6 +1457,18 @@ async function applyXmlEdits() {
 
 // --- modeler event wiring -----------------------------------------------------------
 function bindModelerEvents(modeler) {
+  modeler.on('import.parse.complete', (event) => {
+    // Rebuild back-references right after parsing — before the first lint
+    // pass (linting listens to import.done, which fires later).
+    rebuildFlowNodeBackrefs(event.definitions);
+  });
+
+  modeler.on('elements.changed', () => {
+    // Keep back-references in sync with structural user edits
+    // (connections created / removed).
+    rebuildFlowNodeBackrefs(modeler.getDefinitions());
+  });
+
   modeler.on('linting.completed', (event) => {
     renderLint(event.issues);
   });
@@ -1470,8 +1595,8 @@ $('#btn-export-svg').addEventListener('click', exportSVG);
 $('#btn-export-png').addEventListener('click', exportPNG);
 $('#btn-undo').addEventListener('click', () => bpmnModeler && bpmnModeler.get('undo').undo());
 $('#btn-redo').addEventListener('click', () => bpmnModeler && bpmnModeler.get('undo').redo());
-$('#btn-zoom-in').addEventListener('click', () => bpmnModeler && bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 1.25));
-$('#btn-zoom-out').addEventListener('click', () => bpmnModeler && bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 0.8));
+$('#btn-zoom-in').addEventListener('click', () => { if (bpmnModeler) { bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 1.25); setZoomStatus(); }});
+$('#btn-zoom-out').addEventListener('click', () => { if (bpmnModeler) { bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 0.8); setZoomStatus(); }});
 $('#btn-zoom-fit').addEventListener('click', () => bpmnModeler && bpmnModeler.get('canvas').zoom('fit-viewport', 'auto'));
 $('#btn-search').addEventListener('click', openSearch);
 $('#btn-minimap').addEventListener('click', toggleMinimap);
@@ -1593,60 +1718,111 @@ async function copyDiagnosticInfo() {
   lines.push('=== BPMN Studio Diagnostics ===');
   lines.push(`Timestamp: ${new Date().toISOString()}`);
   lines.push(`Platform: ${currentPlatform || 'unknown'}`);
-  lines.push(`File: ${currentFileName}`);
+  lines.push(`File: ${currentFileName}${isDirty ? ' (unsaved changes)' : ''}`);
+
+  // ── versions ──
+  lines.push('');
+  lines.push('--- Versions ---');
+  lines.push(`  bpmn-js: ${bpmnJsPkg.version}`);
+  lines.push(`  bpmn-js-bpmnlint: ${bpmnJsBpmnlintPkg.version} (bundled rules: bpmnlint ${bpmnlintPkg.version})`);
+  if (studio && studio.getVersions) {
+    try {
+      const v = await studio.getVersions();
+      if (v) {
+        lines.push(`  BPMN Studio: ${v.app} (Electron ${v.electron} / Chromium ${v.chrome} / Node ${v.node}, ${v.platform})`);
+      }
+    } catch { /* ignore */ }
+  } else {
+    lines.push(`  Runtime: browser (${navigator.userAgent})`);
+  }
   lines.push('');
 
-  // ── import warnings ──
-  try {
-    const { xml } = await bpmnModeler.saveXML({ format: true });
-    const { warnings: importWarnings } = await bpmnModeler.importXML(xml);
-    if (importWarnings.length) {
-      lines.push('--- Import Warnings ---');
-      importWarnings.forEach(w => lines.push(`  ${w.message || String(w)}`));
-      lines.push('');
-    }
-  } catch (err) {
-    lines.push(`--- Import Error --- ${err.message}`);
+  // ── import warnings from the ORIGINAL file load (kept in the notice bar) ──
+  const loadWarnings = els.noticeBar._warnings || [];
+  if (loadWarnings.length) {
+    lines.push(`--- Import Warnings (original load: ${loadWarnings.length}) ---`);
+    loadWarnings.forEach(w => lines.push(`  ${w.message || String(w)}`));
     lines.push('');
   }
 
-  // wait for linting to finish after re-import
-  let rawIssues = null;
+  // ── lint state (LIVE model — non-invasive, no re-import) ──
+  // NOTE: BpmnModeler only proxies `on`/`off` to the eventBus — there is no
+  // `modeler.once()`.  Subscribe via `eventBus.once()` instead.
+  lines.push('--- Lint Issues ---');
   try {
-    rawIssues = await new Promise(resolve => {
-      const timeout = setTimeout(() => resolve(null), 2000);
-      bpmnModeler.once('linting.completed', (ev) => {
+    const lintModule = bpmnModeler.get('linting');
+    let lintIssues = (lintModule && lintModule._issues) || {};
+    let lintSource = 'last known state (completion event timed out — values may be stale)';
+
+    // trigger one fresh, non-destructive lint pass and wait for its result
+    const eventBus = bpmnModeler.get('eventBus');
+    const result = await new Promise(resolve => {
+      const timeout = setTimeout(() => resolve(null), 3000);
+      eventBus.once('linting.completed', (ev) => {
         clearTimeout(timeout);
-        resolve(ev.issues);
+        resolve(ev);
       });
-      bpmnModeler.get('canvas').resized();
+      if (typeof lintModule.update === 'function') {
+        try {
+          lintModule.update();
+        } catch { /* ignore */ }
+      }
     });
-  } catch { /* ignore */ }
 
-  // ── lint issues ──
-  if (rawIssues && Object.keys(rawIssues).length) {
-    const filteredIds = [];
-    const realIds = [];
-    for (const id of Object.keys(rawIssues)) {
-      (isDiLabelElement(id) ? filteredIds : realIds).push(id);
+    if (result && result.issues) {
+      lintIssues = result.issues;
+      lintSource = 'fresh lint pass';
     }
+    lines.push(`  collection: ${lintSource}`);
 
-    if (realIds.length) {
-      lines.push('--- Lint Issues ---');
-      for (const id of realIds) {
-        for (const issue of (rawIssues[id] || [])) {
-          lines.push(`  [${issue.severity || '?'}] ${id} — ${issue.rule || issue.id || '?'}: ${issue.message || issue.description || ''}`);
+    try {
+      const active = typeof lintModule.isActive === 'function' ? lintModule.isActive() : null;
+      if (active !== null) {
+        lines.push(`  overlays active: ${active}`);
+      }
+    } catch { /* ignore */ }
+
+    // markers currently rendered on the canvas (what the user actually sees)
+    try {
+      const overlays = bpmnModeler.get('overlays');
+      const marked = [];
+      for (const el of bpmnModeler.get('elementRegistry').getAll()) {
+        const ovs = overlays.get(el.id);
+        if (ovs && ovs.length) marked.push(`${el.id}×${ovs.length}`);
+      }
+      lines.push(`  canvas markers: ${marked.length ? marked.join(', ') : 'none'}`);
+    } catch { /* no overlay service */ }
+
+    lines.push(`  rules configured: ${Object.keys(lintConfig.config.rules).length}`);
+
+    if (lintIssues && Object.keys(lintIssues).length) {
+      const filteredIds = [];
+      const realIds = [];
+      for (const id of Object.keys(lintIssues)) {
+        (isDiLabelElement(id) ? filteredIds : realIds).push(id);
+      }
+
+      if (realIds.length) {
+        let total = 0;
+        for (const id of realIds) total += (lintIssues[id] || []).length;
+        lines.push(`  ${total} issue(s) on ${realIds.length} element(s):`);
+        for (const id of realIds) {
+          for (const issue of (lintIssues[id] || [])) {
+            const severity = issue.category || issue.severity || '?';
+            lines.push(`  [${severity}] ${id} — ${issue.rule || '?'}: ${issue.message || ''}`);
+          }
         }
       }
-      lines.push('');
-    }
 
-    if (filteredIds.length) {
-      lines.push(`(Suppressed ${filteredIds.length} DI label false-positives: ${filteredIds.join(', ')})`);
-      lines.push('');
+      if (filteredIds.length) {
+        lines.push(`  (suppressed ${filteredIds.length} DI label false-positives: ${filteredIds.join(', ')})`);
+      }
+    } else {
+      lines.push('  none ✓');
     }
-  } else {
-    lines.push('--- Lint Issues: none ✓ ---');
+    lines.push('');
+  } catch (err) {
+    lines.push(`  collection FAILED: ${err.message}`);
     lines.push('');
   }
 
@@ -1670,6 +1846,62 @@ async function copyDiagnosticInfo() {
     lines.push(`--- Element Registry Error: ${err.message} ---`);
     lines.push('');
   }
+
+  // ── model integrity ──
+  lines.push('--- Model Integrity ---');
+  try {
+    const registry = bpmnModeler.get('elementRegistry');
+    const all = registry.getAll();
+    const problems = [];
+
+    // (1) sequence flows whose source/target does not resolve
+    for (const el of all) {
+      const bo = el.businessObject;
+      if (!bo || bo.$type !== 'bpmn:SequenceFlow') continue;
+      const refId = (ref) => ref && (typeof ref === 'object' ? ref.id : ref);
+      const src = refId(bo.sourceRef);
+      const tgt = refId(bo.targetRef);
+      if (!src || !registry.get(src)) {
+        problems.push(`${el.id}: sourceRef ${src ? `unresolved (${src})` : 'missing'}`);
+      }
+      if (!tgt || !registry.get(tgt)) {
+        problems.push(`${el.id}: targetRef ${tgt ? `unresolved (${tgt})` : 'missing'}`);
+      }
+    }
+
+    // (2) back-reference population — the condition under which the
+    //     connectivity rules (no-disconnected, no-implicit-start/end)
+    //     report false positives
+    const boBackrefMissing = [];
+    for (const el of all) {
+      const bo = el.businessObject;
+      if (!bo || el.waypoints) continue;
+      if (typeof bo.$instanceOf !== 'function' || !bo.$instanceOf('bpmn:FlowNode')) continue;
+      const connected = (el.incoming || []).length > 0 || (el.outgoing || []).length > 0;
+      const boRefs = (bo.incoming || []).length > 0 || (bo.outgoing || []).length > 0;
+      if (connected && !boRefs) boBackrefMissing.push(el.id);
+    }
+    if (boBackrefMissing.length) {
+      problems.push(`back-references missing on ${boBackrefMissing.length} connected flow node(s): ${boBackrefMissing.join(', ')} — connectivity lint rules report false positives here`);
+    }
+
+    // (3) model elements without a DI entry
+    const noDi = all
+      .filter(el => !el.di && !isDiLabelElement(el.id))
+      .map(el => el.id);
+    if (noDi.length) {
+      problems.push(`no DI entry for: ${noDi.join(', ')}`);
+    }
+
+    if (problems.length) {
+      for (const p of problems) lines.push(`  ✗ ${p}`);
+    } else {
+      lines.push('  all checks passed ✓');
+    }
+  } catch (err) {
+    lines.push(`  check failed: ${err.message}`);
+  }
+  lines.push('');
 
   // ── definitions ──
   try {
@@ -1766,6 +1998,7 @@ if (studio) {
           try { const c = dmnGet('canvas'); if (c) c.zoom({ x: 0, y: 0 }, 1.25); } catch { /* ignore */ }
         } else if (bpmnModeler) {
           bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 1.25);
+          setZoomStatus();
         }
         return;
       }
@@ -1774,6 +2007,7 @@ if (studio) {
           try { const c = dmnGet('canvas'); if (c) c.zoom({ x: 0, y: 0 }, 0.8); } catch { /* ignore */ }
         } else if (bpmnModeler) {
           bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 0.8);
+          setZoomStatus();
         }
         return;
       }
@@ -1782,6 +2016,7 @@ if (studio) {
           try { const c = dmnGet('canvas'); if (c) c.zoom(1, { x: 0, y: 0 }); } catch { /* ignore */ }
         } else if (bpmnModeler) {
           bpmnModeler.get('canvas').zoom(1, { x: 0, y: 0 });
+          setZoomStatus();
         }
         return;
       }
@@ -1790,6 +2025,7 @@ if (studio) {
           try { const c = dmnGet('canvas'); if (c) c.zoom('fit-viewport', 'auto'); } catch { /* ignore */ }
         } else if (bpmnModeler) {
           bpmnModeler.get('canvas').zoom('fit-viewport', 'auto');
+          setZoomStatus();
         }
         return;
       }
