@@ -21,6 +21,12 @@ contextBridge.exposeInMainWorld('bpmnStudio', {
   /** @returns {Promise<{size: number, mtimeMs: number} | null>} */
   statFile: (filePath) => ipcRenderer.invoke('file:stat', filePath),
 
+  /** read a persisted preference (survives restarts; undefined if unset) */
+  getPreference: (key) => ipcRenderer.invoke('prefs:get', key),
+
+  /** persist a preference across restarts */
+  setPreference: (key, value) => ipcRenderer.invoke('prefs:set', key, value),
+
   /** subscribe to native menu actions */
   onMenu: (callback) => {
     ipcRenderer.on('menu:action', (_event, action) => callback(action));

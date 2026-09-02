@@ -147,6 +147,47 @@ html, body {
 }
 
 /* ---------- properties panel ---------- */
+#panel-region {
+  flex: 0 0 auto;
+  display: flex;
+  min-height: 0;
+}
+
+/* slim collapse/expand rail pinned to the panel's left edge; stays visible
+   when the panel is collapsed so it can always be reopened */
+#panel-collapse-btn {
+  flex: 0 0 16px;
+  width: 16px;
+  padding: 0;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#panel-collapse-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+#panel-region.collapsed #panel-collapse-btn {
+  border-left: none;
+  border-right: 1px solid var(--border);
+}
+
+#panel-region.collapsed #js-properties-panel {
+  width: 0;
+  border-left: 0;
+  overflow: hidden;
+}
+
 #js-properties-panel {
   width: var(--panel-w);
   flex: 0 0 auto;

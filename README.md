@@ -69,6 +69,7 @@ This project was designed after evaluating the four bpmn-related repositories ch
 
 **界面**
 - 工具栏、状态栏（缩放、选中元素类型）、右侧属性面板、底部校验面板、小地图
+- **可收缩的右侧属性面板**：点击面板左边框的细条、菜单「视图 → 属性面板」或 `Ctrl+Shift+B` 可收起/展开，收起的状态会记住（重新打开程序后保持）；收起后画布自动占满剩余空间
 - **XML 视图**（工具栏 `XML` 按钮）：查看当前图表**完整的格式化 XML**，
   - **选中节点/连线时自动高亮对应的 XML 段落**——黄色标记该元素的模型定义（`<bpmn:*>`），蓝色标记对应的图形定义（`<bpmndi:BPMNShape/BPMNEdge>`，含 `<dc:Bounds>`），可一键自动滚动定位
   - XML 语法着色、可复制完整 XML、随编辑实时刷新（防抖）
@@ -79,7 +80,7 @@ This project was designed after evaluating the four bpmn-related repositories ch
 - **大号错误提示**：错误不再用 `alert()`，统一显示全屏半透明遮罩层的大卡片——大图标 + 大标题 + 大字号错误信息，
   可展开「详细错误信息」（堆栈 + 定位行/列），支持「复制错误信息」；打开/导入/保存/导出失败都会触发
 - 非致命导入警告显示为顶部黄色提示条，「详情…」可查看完整警告列表（含行/列）
-- 键盘快捷键：`Ctrl+N`（BPMN）、`Ctrl+Shift+N`（DMN）、`Ctrl+O/S`、`Ctrl+Shift+S`（SVG）、`Ctrl+Shift+P`（PNG）、`Ctrl+F`（搜索）、`Ctrl+Alt+I`（元数据）、`Esc`（关闭弹层）
+- 键盘快捷键：`Ctrl+N`（BPMN）、`Ctrl+Shift+N`（DMN）、`Ctrl+O/S`、`Ctrl+Shift+S`（SVG）、`Ctrl+Shift+P`（PNG）、`Ctrl+Shift+B`（收起/展开属性面板）、`Ctrl+F`（搜索）、`Ctrl+Alt+I`（元数据）、`Esc`（关闭弹层）
 
 ---
 ### 3.1 重要架构决策：按执行平台加载 moddle 扩展

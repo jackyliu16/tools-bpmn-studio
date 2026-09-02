@@ -90,6 +90,12 @@ function buildMenu() {
           checked: true,
           click: () => sendToFocused('toggle-lint')
         },
+        {
+          label: '属性面板（右侧）',
+          type: 'checkbox',
+          checked: true,
+          click: () => sendToFocused('toggle-properties')
+        },
         { type: 'separator' },
         { role: 'toggleDevTools', label: '开发者工具' },
         { role: 'togglefullscreen', label: '全屏' }
@@ -212,6 +218,45 @@ ipcMain.handle('file:stat', async (_event, filePath) => {
 ipcMain.on('window:title', (event, title) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) win.setTitle(title || 'BPMN Studio');
+});
+
+// --- IPC: lightweight preference store (userData/preferences.json) -----------
+// localStorage under a sandboxed file:// page is session-only (never flushed to
+// disk), so UI state that must survive restarts lives in this tiny JSON store.
+let prefsCache = null;
+
+function prefsFile() {
+  return path.join(app.getPath('userData'), 'preferences.json');
+}
+
+function loadPrefs() {
+  if (prefsCache) return prefsCache;
+  try {
+    prefsCache = JSON.parse(fs.readFileSync(prefsFile(), 'utf-8'));
+  } catch {
+    prefsCache = {};
+  }
+  return prefsCache;
+}
+
+function persistPrefs() {
+  try {
+    fs.mkdirSync(path.dirname(prefsFile()), { recursive: true });
+    fs.writeFileSync(prefsFile(), JSON.stringify(prefsCache, null, 2), 'utf-8');
+  } catch { /* disk errors are non-fatal for a preference store */ }
+}
+
+ipcMain.handle('prefs:get', (_event, key) => {
+  const prefs = loadPrefs();
+  return key ? prefs[key] : prefs;
+});
+
+ipcMain.handle('prefs:set', (_event, key, value) => {
+  const prefs = loadPrefs();
+  if (value === undefined || value === null) delete prefs[key];
+  else prefs[key] = value;
+  persistPrefs();
+  return prefs[key];
 });
 
 // --- app lifecycle ----------------------------------------------------------

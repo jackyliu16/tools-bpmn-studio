@@ -207,7 +207,9 @@ const els = {
   dmnViewTabs: $('#dmn-view-tabs'),
   btnDmnDrd: $('#btn-dmn-drd'),
   btnDmnDecisionTable: $('#btn-dmn-decision-table'),
-  btnDmnLiteralExpression: $('#btn-dmn-literal-expression')
+  btnDmnLiteralExpression: $('#btn-dmn-literal-expression'),
+  panelRegion: $('#panel-region'),
+  panelCollapseBtn: $('#panel-collapse-btn')
 };
 
 // --- per-platform configuration ----------------------------------------------
@@ -1581,6 +1583,45 @@ function toggleMinimap() {
   $('#btn-minimap').classList.toggle('active', minimap.isOpen());
 }
 
+// --- properties panel collapse (right pane) ----------------------------------------------
+const PANEL_STATE_KEY = 'bpmn-studio.panel-collapsed';
+const PANEL_STATE_PREF = 'panel.collapsed';
+
+function setPropertiesPanelCollapsed(collapsed) {
+  els.panelRegion.classList.toggle('collapsed', collapsed);
+  els.panelCollapseBtn.textContent = collapsed ? '«' : '»';
+  els.panelCollapseBtn.title = collapsed ? '展开属性面板' : '收起属性面板';
+  els.panelCollapseBtn.setAttribute('aria-label', els.panelCollapseBtn.title);
+}
+
+// Persist through the Electron main-process store when available: localStorage
+// under a sandboxed file:// page is session-only (never flushed to disk). Plain
+// browsers fall back to localStorage, where it does persist.
+async function readPanelCollapsedState() {
+  if (studio && typeof studio.getPreference === 'function') {
+    try {
+      const value = await studio.getPreference(PANEL_STATE_PREF);
+      if (typeof value === 'boolean') return value;
+    } catch { /* bridge unavailable */ }
+  }
+  try { return localStorage.getItem(PANEL_STATE_KEY) === '1'; } catch { return false; }
+}
+
+function writePanelCollapsedState(collapsed) {
+  if (studio && typeof studio.setPreference === 'function') {
+    studio.setPreference(PANEL_STATE_PREF, collapsed).catch(() => {});
+  }
+  try {
+    localStorage.setItem(PANEL_STATE_KEY, collapsed ? '1' : '0');
+  } catch { /* storage unavailable */ }
+}
+
+function togglePropertiesPanel() {
+  const collapsed = !els.panelRegion.classList.contains('collapsed');
+  setPropertiesPanelCollapsed(collapsed);
+  writePanelCollapsedState(collapsed);
+}
+
 // --- search -----------------------------------------------------------------------------
 function openSearch() {
   if (!bpmnModeler) return;
@@ -1588,6 +1629,7 @@ function openSearch() {
 }
 
 // --- toolbar wiring ------------------------------------------------------------------------
+$('#panel-collapse-btn').addEventListener('click', togglePropertiesPanel);
 $('#btn-new').addEventListener('click', createNewDiagram);
 $('#btn-open').addEventListener('click', openFile);
 $('#btn-save').addEventListener('click', () => saveFile(false));
@@ -2031,6 +2073,7 @@ if (studio) {
       }
       case 'toggle-minimap': return toggleMinimap();
       case 'toggle-lint': return toggleLintPanel();
+      case 'toggle-properties': return togglePropertiesPanel();
       case 'toggle-simulate': return toggleSimulation();
       case 'search': return openSearch();
       case 'file-info': return openMetadataDialog();
@@ -2056,6 +2099,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     e.shiftKey ? exportSVG() : saveFile(false);
   } else if (k === 'p' && e.shiftKey) { e.preventDefault(); exportPNG(); }
+  else if (k === 'b' && e.shiftKey) { e.preventDefault(); togglePropertiesPanel(); }
   else if (k === 'f') { e.preventDefault(); openSearch(); }
   else if (k === 'd' && e.shiftKey) { e.preventDefault(); toggleTheme(); }
   else if (k === 'z') {
@@ -2077,4 +2121,10 @@ document.addEventListener('keydown', (e) => {
 });
 
 // --- boot ------------------------------------------------------------------------------------
-createNewDiagram();
+// restore persisted UI state (collapsed properties panel) before first diagram render
+(async () => {
+  try {
+    if (await readPanelCollapsedState()) setPropertiesPanelCollapsed(true);
+  } catch { /* never let boot fail on persistence */ }
+  createNewDiagram();
+})();
