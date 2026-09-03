@@ -10,13 +10,17 @@
   },
   "homepage": "https://github.com/bpmn-studio/bpmn-studio",
   "license": "MIT",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "npm run lint:pack && vite build",
+    "build": "npm run lint:pack && npm run lint:js && vite build",
     "preview": "vite preview",
     "serve": "vite preview --host --port 4173",
     "electron:dev": "npm run build && electron .",
     "lint:pack": "bpmnlint-pack-config -c .bpmnlintrc -o src/lint-config.js -t es",
+    "lint:js": "eslint .",
     "test:smoke": "vite-node scripts/smoke.mjs",
     "dist": "npm run build && electron-builder --linux",
     "dist:linux": "npm run build && electron-builder --linux",
@@ -41,12 +45,14 @@
     "zeebe-bpmn-moddle": "^1.18.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.0.0",
     "bpmnlint-pack-config": "^0.9.0",
     "css.escape": "^1.5.1",
     "electron": "29.4.6",
     "electron-builder": "^26.15.7",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0",
     "jsdom": "^26.1.0",
-    "tsx": "^4.23.12",
     "vite": "^8.2.2",
     "vite-node": "^6.0.0"
   },
