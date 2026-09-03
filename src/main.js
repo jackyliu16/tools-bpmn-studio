@@ -652,6 +652,17 @@ function bindDmnModelerEvents(modeler) {
       els.statusRight.textContent = '';
     }
   });
+
+  // DMN 每个视图（drd/决策表/文字表达式/boxedExpression）是独立 diagram-js 实例，
+  // 各有独立命令栈；viewer.created 于每类视图首次打开时触发一次（viewer 惰性创建并复用）。
+  modeler.on('viewer.created', ({ viewer }) => {
+    viewer.on('commandStack.changed', () => {
+      // 近似脏跟踪：任一视图有命令变更即置脏，保存时清零。
+      // DMN 无跨视图统一命令栈，撤销回保存点不会自动清除星号（BPMN 侧是精确的）。
+      if (lastSavedXML !== null) setDirty(true);
+      if (xmlVisible) debouncedXmlRefresh();
+    });
+  });
 }
 
 /** Get a service from the DMN modeler's active viewer */
@@ -728,6 +739,14 @@ async function setDiagram(xml, name, filePath) {
 }
 
 async function setDmnDiagram(xml, name, filePath) {
+  // 预检先于一切触碰画布的动作：格式错误 → 直接友好错误卡，画布/上一模型保持原样
+  const preErr = precheckDmnXml(xml);
+  if (preErr) {
+    preErr.warnings = [];
+    preErr.parseLocation = null;
+    preErr.failedXml = xml;
+    throw preErr;
+  }
   let warnings;
   try {
     ({ warnings } = await dmnModeler.importXML(xml));
@@ -812,6 +831,24 @@ function precheckBpmnXml(xml) {
   }
   if (!/<[\w.-]+:BPMNDiagram\b/.test(xml)) {
     return new Error('文件中没有 BPMNDI 图形定义（缺少 <BPMNDiagram>），无法绘制图表');
+  }
+  return null;
+}
+
+/**
+ * DMN XML 导入前预检（触碰画布之前）：仅检查格式良好性。
+ * dmn-js 对缺 DMNDI 有视图回退逻辑（_getInitialView），故不做 DI 强制（与 BPMN 不同）。
+ *
+ * @param {string} xml
+ * @returns {Error|null} 返回 Error 时 message 即用户可读的失败原因
+ */
+function precheckDmnXml(xml) {
+  try {
+    const parsed = new DOMParser().parseFromString(xml, 'application/xml');
+    const perr = parsed.getElementsByTagName('parsererror')[0];
+    if (perr) return new Error('XML 格式错误：' + perr.textContent.trim());
+  } catch (err) {
+    return new Error('XML 格式错误：' + (err.message || String(err)));
   }
   return null;
 }
@@ -1628,6 +1665,11 @@ async function refreshXmlView() {
     setXmlStatus('XML 生成失败：' + (err.message || err));
   }
 }
+
+/** XML 面板开启时的模型同步刷新（节流沉淀高频命令事件，BPMN/DMN 共用） */
+const debouncedXmlRefresh = debounce(() => {
+  if (xmlVisible) refreshXmlView();
+}, 500);
 
 async function toggleXmlView() {
   xmlVisible = !xmlVisible;
