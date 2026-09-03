@@ -113,12 +113,15 @@
       <div class="error-icon">⚠️</div>
       <h2 id="error-title">出错了</h2>
       <p id="error-message" class="error-message"></p>
+      <p id="error-suggestion" class="error-suggestion hidden"></p>
+      <div id="error-excerpt" class="error-excerpt hidden"></div>
       <details class="error-details">
         <summary id="error-summary">详细错误信息</summary>
         <pre id="error-stack"></pre>
         <ul id="error-warnings" class="hidden"></ul>
       </details>
       <div class="app-overlay-actions">
+        <button id="btn-error-view-xml" class="tool hidden" title="在 XML 视图中查看导入失败的原始内容并定位出错行">在 XML 视图中查看原文</button>
         <button id="btn-error-copy" class="tool">复制错误信息</button>
         <button id="btn-error-close" class="tool primary">知道了</button>
       </div>

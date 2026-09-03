@@ -149,8 +149,13 @@ ipcMain.handle('dialog:open-diagram', async (event) => {
   if (result.canceled || !result.filePaths.length) return null;
 
   const filePath = result.filePaths[0];
-  const content = await fs.promises.readFile(filePath, 'utf-8');
-  return { path: filePath, content };
+  try {
+    const content = await fs.promises.readFile(filePath, 'utf-8');
+    return { path: filePath, content };
+  } catch (err) {
+    // 结构化返回，避免 IPC 拒绝丢失错误码（renderer 据此给出中文可读提示）
+    return { error: { code: err.code || 'UNKNOWN', syscall: err.syscall, message: err.message } };
+  }
 });
 
 ipcMain.handle('dialog:save-diagram', async (event, payload) => {
@@ -169,8 +174,12 @@ ipcMain.handle('dialog:save-diagram', async (event, payload) => {
 
   if (result.canceled || !result.filePath) return null;
 
-  await fs.promises.writeFile(result.filePath, content, 'utf-8');
-  return { path: result.filePath };
+  try {
+    await fs.promises.writeFile(result.filePath, content, 'utf-8');
+    return { path: result.filePath };
+  } catch (err) {
+    return { error: { code: err.code || 'UNKNOWN', syscall: err.syscall, message: err.message } };
+  }
 });
 
 ipcMain.handle('dialog:export-file', async (event, payload) => {
@@ -185,12 +194,16 @@ ipcMain.handle('dialog:export-file', async (event, payload) => {
 
   if (result.canceled || !result.filePath) return null;
 
-  if (buffer) {
-    await fs.promises.writeFile(result.filePath, Buffer.from(buffer));
-  } else {
-    await fs.promises.writeFile(result.filePath, content || '');
+  try {
+    if (buffer) {
+      await fs.promises.writeFile(result.filePath, Buffer.from(buffer));
+    } else {
+      await fs.promises.writeFile(result.filePath, content || '');
+    }
+    return { path: result.filePath };
+  } catch (err) {
+    return { error: { code: err.code || 'UNKNOWN', syscall: err.syscall, message: err.message } };
   }
-  return { path: result.filePath };
 });
 
 // --- IPC: app / runtime versions (for diagnostics) ------------------------------

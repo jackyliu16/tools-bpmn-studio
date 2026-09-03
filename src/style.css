@@ -28,6 +28,17 @@
   --error-msg-border: #f5c6c6;
   --error-msg-color: #2c3e50;
   --error-details-color: #8a6d1d;
+  --badge-error-bg: #fdecea;
+  --badge-error-color: #c0392b;
+  --badge-warn-bg: #fdf3e3;
+  --badge-warn-color: #b9770e;
+  --badge-info-bg: #e8f4fd;
+  --badge-info-color: #2471a3;
+  --chip-bg: #eef3f7;
+  --chip-color: #5d6b7a;
+  --doc-link-color: #0e8fd0;
+  --err-line-bg: rgba(192, 57, 43, 0.13);
+  --err-line-border: #c0392b;
   --minimap-closed-bg: rgba(255, 255, 255, 0.95);
   --minimap-shadow: rgba(0, 0, 0, 0.15);
   --code-bg: #1e2430;
@@ -239,6 +250,71 @@ html, body {
 }
 
 #lint-list li { margin: 2px 0; }
+
+/* ---------- lint panel — 逐条问题明细 ---------- */
+#lint-list {
+  padding-left: 12px;
+}
+
+#lint-list .lint-issue {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 5px 8px;
+  margin: 2px 0;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  list-style: none;
+}
+
+#lint-list .lint-issue:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+}
+
+#lint-list .lint-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 10px;
+  letter-spacing: 0.5px;
+}
+
+#lint-list .lint-badge.error { background: var(--badge-error-bg); color: var(--badge-error-color); }
+#lint-list .lint-badge.warn { background: var(--badge-warn-bg); color: var(--badge-warn-color); }
+#lint-list .lint-badge.info { background: var(--badge-info-bg); color: var(--badge-info-color); }
+
+#lint-list .lint-message {
+  flex: 1 1 220px;
+  min-width: 220px;
+  word-break: break-word;
+}
+
+#lint-list .elem-chip {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  background: var(--chip-bg);
+  color: var(--chip-color);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+}
+
+#lint-list .lint-rule { flex: 0 0 auto; font-size: 12px; color: var(--text-secondary); }
+
+#lint-list .doc-link {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--doc-link-color);
+  text-decoration: none;
+}
+
+#lint-list .doc-link:hover { text-decoration: underline; }
 
 /* ---------- status bar ---------- */
 #statusbar {
@@ -537,6 +613,95 @@ mark.xml-match.current {
   color: var(--error-details-color);
 }
 
+.error-card #error-warnings li {
+  margin: 4px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+}
+
+.error-card #error-warnings .warn-text { word-break: break-word; }
+
+.error-card #error-warnings .warn-pos {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.error-card #error-warnings li.warn-more { color: var(--text-secondary); font-size: 12px; }
+
+/* ---------- big error card — 修复建议 + 出错位置预览 ---------- */
+.error-card .error-suggestion {
+  font-size: 14px;
+  color: var(--accent-dark);
+  background: var(--surface-active-bg);
+  border: 1px solid var(--error-msg-border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 0 0 14px;
+  text-align: left;
+}
+
+.error-card .error-excerpt {
+  text-align: left;
+  margin: 0 0 14px;
+}
+
+.error-card .excerpt-heading {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--error-title-color);
+  margin-bottom: 4px;
+}
+
+.error-card .excerpt {
+  font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--code-bg);
+  color: var(--code-color);
+  border-radius: 8px;
+  padding: 8px 6px;
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.error-card .excerpt-row {
+  display: flex;
+  gap: 10px;
+  border-left: 3px solid transparent;
+  padding: 0 6px;
+}
+
+.error-card .excerpt-row.err {
+  background: var(--err-line-bg);
+  border-left-color: var(--err-line-border);
+}
+
+.error-card .excerpt-no {
+  flex: 0 0 2.5em;
+  text-align: right;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.error-card .excerpt-code {
+  white-space: pre;
+  text-align: left;
+  flex: 1 1 auto;
+}
+
+/* ---------- XML 视图 — 出错行高亮 ---------- */
+#xml-code .xml-err-line {
+  background: var(--err-line-bg);
+  outline: 1px solid var(--err-line-border);
+  border-radius: 3px;
+  color: inherit;
+}
+
 .app-overlay-actions {
   display: flex;
   justify-content: center;
@@ -665,6 +830,17 @@ html[data-theme="dark"] {
   --error-msg-border: hsl(0, 35%, 28%);
   --error-msg-color: hsl(222, 15%, 85%);
   --error-details-color: hsl(40, 60%, 65%);
+  --badge-error-bg: hsl(0, 40%, 22%);
+  --badge-error-color: hsl(0, 70%, 70%);
+  --badge-warn-bg: hsl(40, 40%, 18%);
+  --badge-warn-color: hsl(40, 70%, 70%);
+  --badge-info-bg: hsl(210, 40%, 18%);
+  --badge-info-color: hsl(210, 60%, 70%);
+  --chip-bg: hsl(222, 16%, 16%);
+  --chip-color: hsl(222, 12%, 70%);
+  --doc-link-color: hsl(210, 70%, 65%);
+  --err-line-bg: hsla(360, 55%, 50%, 0.28);
+  --err-line-border: hsl(0, 70%, 60%);
   --minimap-closed-bg: hsla(222, 18%, 12%, 0.95);
   --minimap-shadow: rgba(0, 0, 0, 0.4);
   --code-bg: hsl(222, 20%, 8%);

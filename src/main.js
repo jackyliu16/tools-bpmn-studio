@@ -169,6 +169,11 @@ function rebuildFlowNodeBackrefs(definitions) {
 // packed by `npm run lint:pack` (bpmnlint-pack-config)
 import lintConfig from './lint-config.js';
 
+// lint 规则 / 元素的中文文案（纯逻辑模块）
+import { ruleInfo, elementTypeLabel, lintCategoryLabel, categorySortWeight } from './lint-l10n.js';
+// 错误细节提取与文件系统错误分类（纯逻辑模块）
+import { extractParseLocation, excerptLines, describeFsError } from './error-detail.js';
+
 import initialDiagramXML from '../resources/newDiagram.bpmn?raw';
 
 // --- DMN editor -----------------------------------------------------------
@@ -196,6 +201,9 @@ const els = {
   errorMessage: $('#error-message'),
   errorStack: $('#error-stack'),
   errorWarnings: $('#error-warnings'),
+  errorSuggestion: $('#error-suggestion'),
+  errorExcerpt: $('#error-excerpt'),
+  errorViewXmlBtn: $('#btn-error-view-xml'),
   infoModal: $('#info-modal'),
   infoContent: $('#info-content'),
   xmlPanel: $('#xml-panel'),
@@ -249,6 +257,7 @@ let lintVisible = true;
 let simulateMode = false;
 let xmlVisible = false;
 let xmlEditing = false;
+let xmlDetached = false; // XML 视图处于「脱离模型」只读态（展示导入失败的原始内容）
 let currentXml = '';
 
 // --- DMN state -----------------------------------------------------------
@@ -315,8 +324,111 @@ if (window.matchMedia) {
 
 // --- big error / notice overlay -------------------------------------------------
 let lastError = null;
+let lastFailedXml = null;
+let lastFailedLocation = null;
 
-function showError({ title = '出错了', message = '发生未知错误', error, warningObjects = [] } = {}) {
+/**
+ * 将 importXML 返回的警告统一为结构化形态
+ * `{ message, line, column, elementId, elementType, elementName }`。
+ *
+ * 兼容三种来源：
+ *  - moddle-xml 解析警告 `{ message, error }`（行/列内嵌在 message 字符串中）
+ *  - bpmn-js 导入阶段警告 `{ message, context: { element: { id, $type, name } } }`
+ *  - 已规范化的对象（幂等）
+ */
+function normalizeWarning(w) {
+  if (!w || typeof w !== 'object') {
+    return { message: String(w == null ? '' : w) };
+  }
+  const out = { message: typeof w.message === 'string' ? w.message : String(w) };
+
+  // 已是规范化形态（幂等返回）
+  if (w.elementId || w.elementType || w.line || w.column) {
+    if (w.elementId) out.elementId = w.elementId;
+    if (w.elementType) out.elementType = w.elementType;
+    if (w.elementName) out.elementName = w.elementName;
+    if (w.line) out.line = w.line;
+    if (w.column) out.column = w.column;
+    return out;
+  }
+
+  const loc = extractParseLocation(w);
+  if (loc) {
+    out.line = loc.line;
+    out.column = loc.column;
+  }
+
+  const context = w.context;
+  const elem = context && context.element;
+  if (elem && elem.$type) {
+    out.elementId = elem.id;
+    out.elementType = elementTypeLabel(elem.$type);
+    if (elem.name) out.elementName = elem.name;
+  } else if (context && typeof context.data === 'string') {
+    // moddle-xml 上下文线索，如 "<bpmn:Task>"
+    const tag = context.data.replace(/[<>]/g, '').trim();
+    if (tag) out.elementHint = tag;
+  }
+
+  return out;
+}
+
+/** 渲染解析失败位置 + 附近源码片段（无位置时隐藏并清空） */
+function renderErrorExcerpt(parseLocation) {
+  if (!parseLocation || typeof parseLocation.line !== 'number') {
+    els.errorExcerpt.classList.add('hidden');
+    els.errorExcerpt.innerHTML = '';
+    return;
+  }
+  els.errorExcerpt.classList.remove('hidden');
+  els.errorExcerpt.innerHTML = '';
+
+  const heading = document.createElement('div');
+  heading.className = 'excerpt-heading';
+  heading.textContent = `解析失败位置：第 ${parseLocation.line} 行, 第 ${parseLocation.column} 列`;
+  els.errorExcerpt.appendChild(heading);
+
+  const excerpt = excerptLines(lastFailedXml || '', parseLocation.line);
+  if (!excerpt) return;
+  const firstNo = parseLocation.line - excerpt.errIndex;
+  const pre = document.createElement('pre');
+  pre.className = 'excerpt';
+  excerpt.lines.forEach((lineText, i) => {
+    const row = document.createElement('div');
+    row.className = 'excerpt-row' + (i === excerpt.errIndex ? ' err' : '');
+    const no = document.createElement('span');
+    no.className = 'excerpt-no';
+    no.textContent = String(firstNo + i);
+    const code = document.createElement('span');
+    code.className = 'excerpt-code';
+    code.textContent = lineText || ' ';
+    row.append(no, code);
+    pre.appendChild(row);
+  });
+  els.errorExcerpt.appendChild(pre);
+}
+
+/** Electron 文件系统错误 → 中文错误卡（描述 + 建议） */
+function showFsError(result) {
+  const err = (result && result.error) || {};
+  const d = describeFsError(err.code, err.message);
+  showError({
+    title: d.title,
+    message: d.message,
+    suggestion: d.suggestion,
+    error: new Error(`${d.message} (${err.code || 'UNKNOWN'})`)
+  });
+}
+
+function showError({
+  title = '出错了',
+  message = '发生未知错误',
+  error,
+  warningObjects = [],
+  parseLocation,
+  failedXml,
+  suggestion
+} = {}) {
   const detailLines = [];
   if (error) {
     if (error.message) detailLines.push(error.message);
@@ -327,29 +439,56 @@ function showError({ title = '出错了', message = '发生未知错误', error,
       details: detailLines.join('\n'),
       warnings: warningObjects
     };
+    if (!parseLocation) parseLocation = extractParseLocation(error);
   } else {
     lastError = { title, message, details: '', warnings: warningObjects };
   }
+  lastFailedXml = failedXml || null;
+  lastFailedLocation = parseLocation || null;
 
   els.errorTitle.textContent = lastError.title;
   els.errorMessage.textContent = lastError.message;
+
+  // 修复建议（如文件系统错误的下一步指引）
+  els.errorSuggestion.textContent = suggestion || '';
+  els.errorSuggestion.classList.toggle('hidden', !suggestion);
+
   els.errorStack.textContent = lastError.details || '（无额外信息）';
 
-  els.errorWarnings.classList.toggle('hidden', !lastError.warnings.length);
+  // 规范化并渲染警告列表（上限 50 条防 DOM 爆炸）
+  const warnings = (warningObjects || []).map(normalizeWarning);
+  const MAX_WARNINGS = 50;
+  els.errorWarnings.classList.toggle('hidden', !warnings.length);
   els.errorWarnings.innerHTML = '';
-  for (const w of lastError.warnings) {
+  for (const w of warnings.slice(0, MAX_WARNINGS)) {
     const li = document.createElement('li');
-    const text = w && (w.message || String(w));
-    const el = document.createElement('span');
-    el.textContent = text;
-    li.appendChild(el);
-    if (w && (w.line || w.column)) {
+    const text = document.createElement('span');
+    text.className = 'warn-text';
+    text.textContent = w.message || '（无消息）';
+    li.appendChild(text);
+    if (w.elementType || w.elementId || w.elementHint) {
+      const chip = document.createElement('span');
+      chip.className = 'elem-chip';
+      chip.textContent = [w.elementType, w.elementName, w.elementId, w.elementHint].filter(Boolean).join(' · ');
+      li.appendChild(chip);
+    }
+    if (w.line && w.column) {
       const pos = document.createElement('code');
-      pos.textContent = ` （第 ${w.line} 行, 第 ${w.column} 列）`;
+      pos.className = 'warn-pos';
+      pos.textContent = `第 ${w.line} 行, 第 ${w.column} 列`;
       li.appendChild(pos);
     }
     els.errorWarnings.appendChild(li);
   }
+  if (warnings.length > MAX_WARNINGS) {
+    const li = document.createElement('li');
+    li.className = 'warn-more';
+    li.textContent = `…另有 ${warnings.length - MAX_WARNINGS} 条警告未显示`;
+    els.errorWarnings.appendChild(li);
+  }
+
+  renderErrorExcerpt(parseLocation);
+  els.errorViewXmlBtn.classList.toggle('hidden', !failedXml);
 
   els.errorOverlay.classList.remove('hidden');
   console.error('[bpmn-studio]', lastError.title, lastError.message, error || '');
@@ -358,6 +497,8 @@ function showError({ title = '出错了', message = '发生未知错误', error,
 function hideError() {
   els.errorOverlay.classList.add('hidden');
   lastError = null;
+  lastFailedXml = null;
+  lastFailedLocation = null;
 }
 
 async function copyError() {
@@ -592,6 +733,8 @@ async function setDmnDiagram(xml, name, filePath) {
     ({ warnings } = await dmnModeler.importXML(xml));
   } catch (err) {
     err.warnings = err.warnings || [];
+    err.parseLocation = extractParseLocation(err);
+    err.failedXml = xml;
     throw err;
   }
 
@@ -618,7 +761,91 @@ async function setDmnDiagram(xml, name, filePath) {
   if (xmlVisible) refreshXmlView();
 }
 
+/** 当前 BPMN/DMN 模型的 XML 快照（失败恢复用）；无模型时返回 null */
+async function snapshotCurrentXml() {
+  try {
+    if (editorMode === 'dmn' && dmnModeler) {
+      const { xml } = await dmnModeler.saveXML({ format: true });
+      return xml;
+    }
+    if (bpmnModeler) {
+      const { xml } = await bpmnModeler.saveXML({ format: true });
+      return xml;
+    }
+  } catch { /* 快照失败则无恢复能力 */ }
+  return null;
+}
+
+/**
+ * 导入失败时恢复上一个可用模型。
+ *
+ * bpmn-js/DMN-js 在图形导入前会 clear() 画布并替换 definitions，失败后旧图已丢失：
+ * 画布空白、属性面板可能因根对象不完整而崩溃。这里用导入前的快照重建，
+ * 让用户关闭错误卡后看到的是自己之前的图，而不是空白画布。
+ */
+async function restorePreviousModel(modeler, previousXml) {
+  if (!previousXml || !modeler) return;
+  try {
+    await modeler.importXML(previousXml);
+  } catch (err) {
+    console.warn('restore previous model failed', err);
+  }
+}
+
+/**
+ * BPMN XML 导入前预检（在触碰画布/modeler 之前）：
+ *  - 格式良好性（DOMParser）
+ *  - 包含 BPMNDI 图（<…:BPMNDiagram>，任意前缀）——缺失时 bpmn-js 会 'no diagram to
+ *    display' 失败，且失败时画布已被清空、根对象残缺，属性面板会崩溃；预检把这种
+ *    「残缺」提前变成友好错误卡，画布保持原样。
+ *
+ * @param {string} xml
+ * @returns {Error|null} 返回 Error 时 message 即用户可读的失败原因
+ */
+function precheckBpmnXml(xml) {
+  try {
+    const parsed = new DOMParser().parseFromString(xml, 'application/xml');
+    const perr = parsed.getElementsByTagName('parsererror')[0];
+    if (perr) return new Error('XML 格式错误：' + perr.textContent.trim());
+  } catch (err) {
+    return new Error('XML 格式错误：' + (err.message || String(err)));
+  }
+  if (!/<[\w.-]+:BPMNDiagram\b/.test(xml)) {
+    return new Error('文件中没有 BPMNDI 图形定义（缺少 <BPMNDiagram>），无法绘制图表');
+  }
+  return null;
+}
+
+/** 导入成功后校验画布根元素可用。
+ *
+ * moddle 以 lax 模式解析时，根元素可能被降级为普通对象而不是 ModdleElement
+ * （例如无命名空间的 <definitions>），若放任其进入画布，属性面板在渲染根属性时
+ * 会因 businessObject.get 不存在而崩溃，用户只会看到空画布。
+ * 这里改为抛出带 failedXml 的明确错误 → 走统一错误卡 + 「查看原文」流程。
+ */
+function assertRenderableBpmnRoot(modeler, warnings, xml) {
+  try {
+    const rootBo = modeler.get('canvas').getRootElement().businessObject;
+    if (rootBo && typeof rootBo.get === 'function') return;
+  } catch { /* 画布未就绪 → 按不可用处理 */ }
+  const err = new Error('导入的 XML 未生成可显示的模型（根元素无法解析，或缺少 BPMNDI 图）');
+  err.warnings = warnings || [];
+  err.failedXml = xml;
+  err.parseLocation = null;
+  throw err;
+}
+
 async function setBpmnDiagram(xml, name, filePath) {
+  // 预检先于一切触碰画布的动作：格式错误/缺 BPMNDI → 直接友好错误卡，画布保持原样
+  const preErr = precheckBpmnXml(xml);
+  if (preErr) {
+    preErr.warnings = [];
+    preErr.parseLocation = null;
+    preErr.failedXml = xml;
+    throw preErr;
+  }
+  // 快照必须先于 ensureModeler：平台切换会销毁旧 modeler
+  const previousXml = await snapshotCurrentXml();
   const modeler = ensureModeler(xml);
 
   let warnings;
@@ -626,8 +853,15 @@ async function setBpmnDiagram(xml, name, filePath) {
     ({ warnings } = await modeler.importXML(xml));
   } catch (err) {
     err.warnings = err.warnings || [];
+    err.parseLocation = extractParseLocation(err);
+    err.failedXml = xml;
+    // 恢复上一个可用模型：失败导入已清空画布，不恢复则用户只看得到空白编辑区
+    await restorePreviousModel(modeler, previousXml);
     throw err;
   }
+
+  // lax 解析可能“成功”但根元素不可渲染 → 转成明确错误，而非空画布+面板崩溃
+  assertRenderableBpmnRoot(modeler, warnings, xml);
 
   if (warnings && warnings.length) {
     console.warn('import warnings', warnings);
@@ -662,7 +896,9 @@ async function createNewDiagram() {
       title: '无法创建新图',
       message: err.message || String(err),
       error: err,
-      warningObjects: err.warnings || []
+      warningObjects: err.warnings || [],
+      parseLocation: err.parseLocation,
+      failedXml: err.failedXml
     });
   }
 }
@@ -679,7 +915,9 @@ async function createNewDmnDiagram() {
       title: '无法创建新决策图',
       message: err.message || String(err),
       error: err,
-      warningObjects: err.warnings || []
+      warningObjects: err.warnings || [],
+      parseLocation: err.parseLocation,
+      failedXml: err.failedXml
     });
   }
 }
@@ -695,7 +933,9 @@ async function openDiagramContent(xml, name, filePath) {
       title: `无法打开图表：${name || '文件'}`,
       message: err.message || String(err),
       error: err,
-      warningObjects: err.warnings || []
+      warningObjects: err.warnings || [],
+      parseLocation: err.parseLocation,
+      failedXml: err.failedXml
     });
   }
 }
@@ -705,6 +945,10 @@ async function openFile() {
   if (studio) {
     const result = await studio.openDiagram();
     if (!result) return;
+    if (result.error) {
+      showFsError(result);
+      return;
+    }
     await openDiagramContent(result.content, basename(result.path), result.path);
   } else {
     els.fileInput.value = '';
@@ -743,6 +987,10 @@ async function saveFile(forceAs = false) {
         forceAs
       });
       if (!result) return;
+      if (result.error) {
+        showFsError(result);
+        return;
+      }
       currentFilePath = result.path;
       currentFileName = basename(result.path);
       markSaved(xml);
@@ -769,7 +1017,11 @@ async function exportSVG() {
     }
     const baseName = currentFileName.replace(/\.(bpmn|dmn)$/i, '');
     if (studio) {
-      await studio.exportFile({ name: baseName + '.svg', content: svg });
+      const res = await studio.exportFile({ name: baseName + '.svg', content: svg });
+      if (res && res.error) {
+        showFsError(res);
+        return;
+      }
     } else {
       downloadText(svg, baseName + '.svg', 'image/svg+xml');
     }
@@ -816,10 +1068,14 @@ async function exportPNG() {
     const baseName = currentFileName.replace(/\.(bpmn|dmn)$/i, '');
     if (studio) {
       const buffer = await pngBlob.arrayBuffer();
-      await studio.exportFile({
+      const res = await studio.exportFile({
         name: baseName + '.png',
         buffer
       });
+      if (res && res.error) {
+        showFsError(res);
+        return;
+      }
     } else {
       downloadBlob(pngBlob, baseName + '.png');
     }
@@ -1292,7 +1548,7 @@ function getCurrentSelection() {
 }
 
 function applyXmlSelection(selection) {
-  if (!xmlVisible || !currentXml || xmlEditing) return;
+  if (xmlDetached || !xmlVisible || !currentXml || xmlEditing) return;
   const ids = (selection || [])
     .map((el) => el && el.businessObject && el.businessObject.id)
     .filter(Boolean);
@@ -1322,7 +1578,39 @@ function applyXmlSelection(selection) {
   }
 }
 
+/** 行级高亮渲染（用于「查看导入失败的原始 XML」的脱离模式） */
+function renderXmlViewAtLine(line) {
+  const linesContent = String(currentXml || '').split('\n');
+  const errIdx = Math.min(Math.max(0, (line || 1) - 1), Math.max(0, linesContent.length - 1));
+  els.xmlCode.innerHTML = linesContent
+    .map((l, i) =>
+      i === errIdx ? `<mark class="xml-err-line">${highlightXml(l)}</mark>` : highlightXml(l)
+    )
+    .join('\n');
+}
+
+/** 在 XML 视图中以脱离模式展示导入失败的原始内容并高亮出错行 */
+function viewFailedXmlInXmlView() {
+  if (!lastFailedXml) return;
+  currentXml = lastFailedXml;
+  xmlDetached = true;
+  xmlVisible = true;
+  els.xmlPanel.classList.remove('hidden');
+  $('#btn-xml').classList.add('active');
+  hideError();
+  if (lastFailedLocation && lastFailedLocation.line) {
+    renderXmlViewAtLine(lastFailedLocation.line);
+    setXmlStatus(`已显示导入失败的原始 XML — 第 ${lastFailedLocation.line} 行（第 ${lastFailedLocation.column} 列）出错（非当前模型内容）`);
+  } else {
+    renderXmlView([]);
+    setXmlStatus('已显示导入失败的原始 XML（非当前模型内容）');
+  }
+  if (els.xmlViewer) els.xmlViewer.scrollTop = 0;
+}
+
 async function refreshXmlView() {
+  // 任何一次模型同步刷新都退出「脱离模式」，恢复 XML 视图镜像活模型语义
+  xmlDetached = false;
   if (!xmlVisible || xmlEditing) return;
   if (editorMode === 'dmn' && !dmnModeler) return;
   if (editorMode === 'bpmn' && !bpmnModeler) return;
@@ -1398,35 +1686,39 @@ async function applyXmlEdits() {
     return;
   }
 
-  // well-formedness pre-check (fast, browser-side)
-  let parserError = '';
-  try {
-    const parsed = new DOMParser().parseFromString(editedXml, 'application/xml');
-    const perr = parsed.getElementsByTagName('parsererror')[0];
-    if (perr) parserError = perr.textContent.trim();
-  } catch (err) {
-    parserError = err.message;
-  }
-  if (parserError) {
+  // 预检（格式良好性 + BPMNDI 存在）——在触碰画布之前直接给出友好错误
+  const preErr = precheckBpmnXml(editedXml);
+  if (preErr) {
     showError({
-      title: 'XML 解析失败',
-      message: '编辑后的内容不是格式良好的 XML，请检查后重试。',
-      error: new Error(parserError),
-      warningObjects: []
+      title: 'XML 预检失败',
+      message: preErr.message + '\n请检查后重试。',
+      error: preErr,
+      warningObjects: [],
+      parseLocation: null,
+      failedXml: editedXml
     });
     return;
   }
 
   stopSimulationIfNeeded();
   try {
+    // 快照先于 ensureModeler：平台切换会销毁旧 modeler
+    const previousXml = await snapshotCurrentXml();
     const modeler = ensureModeler(editedXml);
     let warnings = [];
     try {
       ({ warnings } = await modeler.importXML(editedXml));
     } catch (err) {
       err.warnings = err.warnings || [];
+      err.parseLocation = extractParseLocation(err);
+      err.failedXml = editedXml;
+      // 恢复上一个可用模型：失败导入已清空画布/替换 definitions
+      await restorePreviousModel(modeler, previousXml);
       throw err;
     }
+
+    // 与 setBpmnDiagram 相同的根元素可渲染校验
+    assertRenderableBpmnRoot(modeler, warnings, editedXml);
 
     if (warnings && warnings.length) {
       console.warn('apply warnings', warnings);
@@ -1452,7 +1744,9 @@ async function applyXmlEdits() {
       title: '应用 XML 修改失败',
       message: err.message || String(err),
       error: err,
-      warningObjects: err.warnings || []
+      warningObjects: err.warnings || [],
+      parseLocation: err.parseLocation,
+      failedXml: err.failedXml
     });
   }
 }
@@ -1517,29 +1811,157 @@ function isDiLabelElement(id) {
   return typeof id === 'string' && id.endsWith('_label');
 }
 
+/**
+ * 依据 lint 问题在画布上定位元素（点击列表项触发）。
+ *
+ * 目标 id 优先取 issue.actualElementId（问题汇报在子流程/参与者内部时的真实目标）。
+ * 若目标不在当前 plane（位于折叠子流程内），先沿语义树找到包含它的折叠子流程并展开，
+ * 再选中；仍找不到时回退选中可见容器并给出状态提示。
+ */
+function locateLintIssue(visibleId, issue) {
+  if (!bpmnModeler) return;
+  const targetId = issue.actualElementId || visibleId;
+  const registry = bpmnModeler.get('elementRegistry');
+
+  let el = registry.get(targetId);
+  if (!el) {
+    const container = findSemanticParent(targetId);
+    if (container && container.collapsed) {
+      try {
+        const modeling = bpmnModeler.get('modeling');
+        if (typeof modeling.toggleCollapse === 'function') modeling.toggleCollapse(container);
+      } catch { /* 展开失败不阻塞定位 */ }
+      el = registry.get(targetId);
+    }
+    if (!el && container) el = container; // 兜底：至少选中所在子流程
+  }
+
+  if (el) {
+    selectAndScroll(el);
+    return;
+  }
+
+  const fallback = registry.get(visibleId) || bpmnModeler.get('canvas').getRootElement();
+  if (fallback) selectAndScroll(fallback);
+  setStatus(`无法定位问题元素 ${targetId}，已选中最近的容器`);
+}
+
+function selectAndScroll(el) {
+  try {
+    bpmnModeler.get('canvas').scrollToElement(el);
+  } catch { /* canvas 未就绪时忽略 */ }
+  try {
+    bpmnModeler.get('selection').select(el);
+  } catch { /* 无 selection 服务时忽略 */ }
+}
+
+/** 在语义树（flowElements，含递归）中查找包含 targetId 的可见容器 shape */
+function findSemanticParent(targetId) {
+  if (!bpmnModeler) return null;
+  for (const shape of bpmnModeler.get('elementRegistry').getAll()) {
+    if (shape.waypoints) continue;
+    const bo = shape.businessObject;
+    if (bo && bo.flowElements && containsTargetId(bo, targetId)) return shape;
+  }
+  return null;
+}
+
+function containsTargetId(container, id) {
+  const flowElements = container.flowElements || [];
+  for (const fe of flowElements) {
+    if (fe.id === id) return true;
+    if (fe.flowElements && containsTargetId(fe, id)) return true;
+  }
+  return false;
+}
+
+/** lint 问题行的元素 chip 文案（类型中文名 · 名称 (id)） */
+function lintElementChipText(visibleId, issue) {
+  const targetId = issue.actualElementId || visibleId;
+  const registry = bpmnModeler && bpmnModeler.get('elementRegistry');
+  const el = registry && registry.get(visibleId);
+  const bo = el && el.businessObject;
+  const parts = [];
+  if (bo) {
+    const type = elementTypeLabel(bo.$type);
+    if (type) parts.push(type);
+    if (bo.name) parts.push(bo.name);
+  }
+  parts.push(
+    issue.actualElementId && issue.actualElementId !== visibleId
+      ? `${issue.actualElementId}（子流程内）`
+      : targetId
+  );
+  return parts.join(' · ');
+}
+
 function renderLint(issues) {
-  const counted = {};
+  const rows = [];
+  const rules = new Set();
+  let errors = 0;
+  let warns = 0;
+  let infos = 0;
+
   for (const id of Object.keys(issues || {})) {
-    // Skip bpmn-js DI label shapes — they are visual-only wrappers and
-    // have no semantic incoming / outgoing, so every connectivity rule
-    // would produce a false positive on them.
+    // Skip bpmn-js DI label shapes — 视觉包装元素，无语义入/出线，
+    // 所有连通性规则都会在其上产生误报。
     if (isDiLabelElement(id)) continue;
 
     for (const issue of issues[id] || []) {
-      const key = issue.rule || 'unknown';
-      counted[key] = (counted[key] || 0) + 1;
+      const category = issue.category || 'warn';
+      if (category === 'error') errors++;
+      else if (category === 'warn') warns++;
+      else infos++;
+      if (issue.rule) rules.add(issue.rule);
+      rows.push({ id, issue });
     }
   }
 
-  const entries = Object.entries(counted).sort((a, b) => b[1] - a[1]);
-  els.lintSummary.textContent = entries.length
-    ? `${entries.reduce((n, [, c]) => n + c, 0)} 个问题，${entries.length} 类规则`
+  rows.sort((a, b) =>
+    categorySortWeight(a.issue.category) - categorySortWeight(b.issue.category) ||
+    String(a.id).localeCompare(String(b.id))
+  );
+
+  const total = rows.length;
+  els.lintSummary.textContent = total
+    ? `${total} 个问题（${errors} 错误 / ${warns} 警告 / ${infos} 提示），${rules.size} 类规则`
     : '未发现问题 ✓';
 
   els.lintList.innerHTML = '';
-  for (const [rule, count] of entries) {
+  for (const { id, issue } of rows) {
+    const rule = issue.rule || 'unknown';
+    const info = ruleInfo(rule);
+
     const li = document.createElement('li');
-    li.textContent = `${rule} — ${count}`;
+    li.className = 'lint-issue';
+    li.dataset.rule = rule;
+    li.dataset.id = id;
+    li.title = `${info.name} — ${info.suggestion}`;
+
+    const badge = document.createElement('span');
+    badge.className = `lint-badge ${issue.category || 'warn'}`;
+    badge.textContent = lintCategoryLabel(issue.category);
+
+    const msg = document.createElement('span');
+    msg.className = 'lint-message';
+    msg.textContent = issue.message || '';
+
+    const chip = document.createElement('span');
+    chip.className = 'elem-chip';
+    chip.textContent = lintElementChipText(id, issue);
+
+    const ruleName = document.createElement('span');
+    ruleName.className = 'lint-rule';
+    ruleName.textContent = info.name;
+    const docLink = document.createElement('a');
+    docLink.className = 'doc-link';
+    docLink.href = info.docUrl;
+    docLink.target = '_blank';
+    docLink.rel = 'noopener noreferrer';
+    docLink.textContent = '规则文档';
+
+    li.append(badge, msg, chip, ruleName, docLink);
+    li.addEventListener('click', () => locateLintIssue(id, issue));
     els.lintList.appendChild(li);
   }
 }
@@ -1670,6 +2092,7 @@ els.xmlCode.addEventListener('keydown', (e) => {
 // error overlay / notice bar
 $('#btn-error-close').addEventListener('click', hideError);
 $('#btn-error-copy').addEventListener('click', copyError);
+$('#btn-error-view-xml').addEventListener('click', viewFailedXmlInXmlView);
 $('#btn-notice-close').addEventListener('click', hideNotice);
 $('#btn-notice-details').addEventListener('click', () => {
   const warnings = els.noticeBar._warnings || [];
