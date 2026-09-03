@@ -11,7 +11,11 @@
 #   ./build-head.sh --electron --platform linux  # 指定平台
 #   ./build-head.sh --electron --targets AppImage,deb  # 指定目标格式
 #   ./build-head.sh --clean                      # 编译后删除 dist/ 中间产物
+#   ./build-head.sh --fresh                      # 构建前仅清理旧 HEAD 构建（保留 tag 构建）
+#   ./build-head.sh --fresh-all                  # 构建前清空输出根目录中的所有旧产物（含 tag 构建）
 #   ./build-head.sh --output /tmp                # 自定义输出根目录
+#
+# 注意: 本脚本打包的是当前 HEAD（含未提交改动），Electron 产物文件名不含版本号。
 #
 # 平台支持:
 #   linux  → AppImage, deb, tar.gz
@@ -42,6 +46,7 @@ step()  { echo -e "\n${MAGENTA}━━━ $* ━━━${NC}"; }
 
 # ── 参数解析 ────────────────────────────────────────────────────────
 CLEAN=false
+FRESH_MODE=""    # head | all | (空 = 不清旧产物)
 OUTPUT_DIR=""
 ELECTRON=false
 PLATFORM=""      # linux | win | mac | (空 = 当前平台)
@@ -62,6 +67,11 @@ show_help() {
                           win:   nsis,zip
                           mac:   dmg,zip
   --clean                 编译后删除 dist/ 中间产物
+  --fresh                 构建前仅删除本脚本之前生成的旧版本目录
+                          (时间戳标签，如 master-dirty-*)，保留 tag 构建
+                          (v0.x 等) 与其他目录
+  --fresh-all             构建前清空输出根目录中的全部旧产物
+                          (含 tag 构建与遗留的 *-unpacked 目录)
   --output <dir>          输出根目录 (默认: 项目根/release/)
   -h, --help              显示此帮助
 
@@ -77,6 +87,8 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --clean)      CLEAN=true; shift ;;
+    --fresh)      FRESH_MODE="head"; shift ;;
+    --fresh-all)  FRESH_MODE="all"; shift ;;
     --output)     OUTPUT_DIR="$2"; shift 2 ;;
     --electron)   ELECTRON=true; shift ;;
     --platform)   PLATFORM="$2"; shift 2 ;;
@@ -248,10 +260,55 @@ fi
 
 # ── 输出目录 ────────────────────────────────────────────────────────
 if [[ -n "$OUTPUT_DIR" ]]; then
-  RELEASE_DIR="$OUTPUT_DIR/$VERSION_LABEL"
+  RELEASE_ROOT="$OUTPUT_DIR"
 else
-  RELEASE_DIR="$REPO_ROOT/release/$VERSION_LABEL"
+  RELEASE_ROOT="$REPO_ROOT/release"
 fi
+RELEASE_DIR="$RELEASE_ROOT/$VERSION_LABEL"
+
+# --fresh / --fresh-all: 构建前清理输出根目录中的旧产物
+#   head = 仅删除本脚本生成的版本目录（时间戳标签），tag 构建保留
+#   all  = 清空输出根目录中的所有内容（含 tag 构建）
+head_build_name() {
+  # build-head.sh 的版本标签均以 -YYYYMMDD-HHMMSS 结尾:
+  #   <branch>-dirty-<ts> / <branch>-<ts> / build-<short>-<ts>
+  [[ "$1" =~ -[0-9]{8}-[0-9]{6}$ ]]
+}
+
+if [[ -n "$FRESH_MODE" ]]; then
+  if [[ -z "$RELEASE_ROOT" || "$RELEASE_ROOT" == "/" || "${RELEASE_ROOT%/}" == "$REPO_ROOT" ]]; then
+    die "拒绝清空危险路径: $RELEASE_ROOT"
+  fi
+  if [[ -e "$RELEASE_ROOT" ]]; then
+    if [[ "$FRESH_MODE" == "all" ]]; then
+      OLD_SIZE="$(du -sh "$RELEASE_ROOT" 2>/dev/null | awk '{print $1}')"
+      warn "清空输出根目录中的全部旧产物 (${OLD_SIZE:-?}): $RELEASE_ROOT"
+      rm -rf "$RELEASE_ROOT"
+      ok "旧产物已全部删除"
+    else
+      # 只删 head 构建目录；目录名恰好与某 tag 相同的一律保留（ex: tag 名 0.1.5）
+      TAGS="$(git tag 2>/dev/null || true)"
+      REMOVED=0
+      for entry in "$RELEASE_ROOT"/*; do
+        [[ -e "$entry" ]] || continue
+        name="$(basename "$entry")"
+        if [[ -d "$entry" && "$name" =~ -[0-9]{8}-[0-9]{6}$ ]] \
+           && ! grep -qxF "$name" <<<"$TAGS"; then
+          info "删除旧 HEAD 构建: $name"
+          rm -rf "$entry"
+          REMOVED=$((REMOVED + 1))
+        fi
+      done
+      if [[ $REMOVED -eq 0 ]]; then
+        info "没有可删除的旧 HEAD 构建（tag 构建与其余目录已保留）"
+      fi
+      ok "旧 HEAD 构建清理完成"
+    fi
+  else
+    info "输出根目录不存在，无需清理"
+  fi
+fi
+
 mkdir -p "$RELEASE_DIR"
 
 # 记录构建元信息
@@ -312,6 +369,21 @@ if [[ "$ELECTRON" == "true" ]]; then
   done
 
   EB_ARGS+=("-c.directories.output=$EB_OUTPUT")
+
+  # 溯源构建产物命名：打包的是 HEAD，文件名不掺入 package.json 版本号。
+  # 保留各格式既有规范，仅去掉 ${version} 段：
+  #   AppImage → "BPMN Studio.AppImage"   tar.gz → "bpmn-studio.tar.gz"
+  #   deb      → "bpmn-studio_amd64.deb"  exe    → "BPMN Studio Setup.exe"
+  #   win zip  → "bpmn-studio-win.zip"    mac    → "bpmn-studio-mac.dmg/.zip"
+  EB_ARGS+=(
+    "-c.appImage.artifactName=\${productName}.\${ext}"
+    "-c.deb.artifactName=\${name}_\${arch}.\${ext}"
+    "-c.linux.artifactName=\${name}.\${ext}"
+    "-c.nsis.artifactName=\${productName} Setup.\${ext}"
+    "-c.win.artifactName=\${name}-\${os}.\${ext}"
+    "-c.mac.artifactName=\${name}-\${os}.\${ext}"
+  )
+
   EB_ARGS+=(--publish never)
 
   # NixOS: 强制使用项目级缓存，预下载并预解压工具链
