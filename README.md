@@ -183,7 +183,36 @@ release/win-unpacked/                  # 免安装目录（可直接双击运行
 
 ---
 
-## 6. 项目结构 (Layout)
+## 6. GitHub Releases 自动发布 (CI)
+
+推送 `v*.*.*` 版本 tag 时自动构建并发布 Release（[`.github/workflows/release.yml`](.github/workflows/release.yml)）：
+
+```sh
+# 1. 在 package.json 中提升 version（不提升则流水线第一步直接失败）
+# 2. 提交并打 tag
+npm version 0.1.7 --no-git-tag-version   # 或手动改 package.json
+npm run build && npm run test:smoke      # 本地先验证
+
+git add package.json && git commit -m "chore(release): 发布 v0.1.7"
+git tag v0.1.7
+git push origin master --tags
+```
+
+流水线与本地自动打包流程（`build-tag.sh`）对齐：
+
+1. **版本预检** — tag 必须等于 `v` + `package.json` 的 `version`，不一致立即失败
+2. **构建** — `npm run build`（lint:pack → vite build）生成 Web 产物 `dist/`
+3. **冒烟测试** — `npm run test:smoke`（Node + jsdom，纯 BPMN / Camunda 7 / Camunda 8 / DMN 四场景 44 项断言）
+4. **桌面打包** — electron-builder 打包 Linux（AppImage / deb / tar.gz）与 Windows（NSIS exe / zip），`--publish never`（统一由本流水线发布，与 `build-tag.sh` 一致）
+5. **发布** — 创建 GitHub Release，上传 Web 静态包 + 全部安装包，更新说明取自上一版本 tag 到本次 tag 的提交记录（conventional commit 风格）
+
+前置要求：仓库 **Settings → Actions → General → Workflow permissions** 需设为
+“Read and write permissions”（GITHUB_TOKEN 需要写权限创建 Release）。
+每次运行约复用 150 MB 的 electron / electron-builder 工具链缓存，加快后续构建。
+
+---
+
+## 7. 项目结构 (Layout)
 
 ```
 bpmn-studio/
@@ -252,7 +281,7 @@ Electron 集成方式：预加载脚本注入 `window.bpmnStudio`，渲染进程
 
 ---
 
-## 7. 后续扩展 (Roadmap)
+## 8. 后续扩展 (Roadmap)
 
 - [x] 集成 **dmn-js** 作为决策建模模块（v0.1.4）
 - [ ] **元素模板**（`bpmn-js-element-templates`）+ Camunda 模板 JSON schema
@@ -264,6 +293,6 @@ Electron 集成方式：预加载脚本注入 `window.bpmnStudio`，渲染进程
 
 ---
 
-## 8. License
+## 9. License
 
 MIT — 与 bpmn.io 生态一致。`bpmn-js`、`bpmn-moddle`、`dmn-js`、`bpmn-js-examples` 均为 MIT。
