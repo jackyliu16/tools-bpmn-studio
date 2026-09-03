@@ -508,18 +508,8 @@ async function copyError() {
     lastError.message,
     lastError.details
   ].filter(Boolean).join('\n\n');
-  try {
-    await navigator.clipboard.writeText(text);
-    setStatus('错误信息已复制到剪贴板');
-  } catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    ta.remove();
-    setStatus('错误信息已复制到剪贴板');
-  }
+  await copyTextToClipboard(text);
+  setStatus('错误信息已复制到剪贴板');
 }
 
 function showNotice(text, warnings = []) {
@@ -894,11 +884,15 @@ async function setBpmnDiagram(xml, name, filePath) {
     err.failedXml = xml;
     // 恢复上一个可用模型：失败导入已清空画布，不恢复则用户只看得到空白编辑区
     await restorePreviousModel(modeler, previousXml);
+    await rebaseDirtyAfterRestore();
     throw err;
   }
 
   // lax 解析可能“成功”但根元素不可渲染 → 转成明确错误，而非空画布+面板崩溃
   assertRenderableBpmnRoot(modeler, warnings, xml);
+
+  // 导入成功 = 命令栈已清空重建，旧的存档游标作废（后续编辑一律置脏）
+  savedStackIdx = null;
 
   if (warnings && warnings.length) {
     console.warn('import warnings', warnings);
@@ -1013,7 +1007,6 @@ async function saveFile(forceAs = false) {
     return;
   }
 
-  const ext = editorMode === 'dmn' ? '.dmn' : '.bpmn';
   const mime = editorMode === 'dmn' ? 'application/dmn+xml' : 'application/bpmn20-xml';
 
   try {
@@ -1138,21 +1131,75 @@ function downloadBlob(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// --- dirty tracking -------------------------------------------------------------
-const refreshDirty = debounce(async () => {
+/** 复制文本到剪贴板（navigator.clipboard → textarea + execCommand 兜底） */
+async function copyTextToClipboard(text) {
   try {
-    const { xml } = await bpmnModeler.saveXML({ format: true });
-    const dirty = lastSavedXML !== null && xml !== lastSavedXML;
-    setDirty(dirty);
-  } catch (err) {
-    console.warn('saveXML for dirty check failed', err);
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    return true;
   }
-}, 300);
+}
+
+// --- dirty tracking -------------------------------------------------------------
+// 相对「最近一次保存」是否被修改：用命令栈游标精确判定，零序列化开销。
+// diagram-js 每次命令执行/撤销/重做都会推进 _stackIdx（导入会清栈并重置为 -1），
+// 故「当前游标 ≠ 存档游标」即表示有未保存改动；撤销回保存点自动恢复干净。
+// 注意: _stackIdx 是 diagram-js 内部字段，升级后需复核此假设（见下方注释处）。
+let savedStackIdx = null;
+
+function currentStackIdx() {
+  if (!bpmnModeler) return null;
+  try {
+    return bpmnModeler.get('commandStack')._stackIdx;
+  } catch { /* commandStack 服务不可用 */ }
+  return null;
+}
+
+function onBpmnStackChanged() {
+  // 从未保存过：无「脏」语义（新建文件编辑不显示星号，与既有行为一致）
+  if (lastSavedXML === null) return;
+  // 存档基准已失效（刚导入重建过命令栈）→ 只要有任何改动就算脏
+  if (savedStackIdx === null) { setDirty(true); return; }
+  setDirty(currentStackIdx() !== savedStackIdx);
+}
 
 function markSaved(xml) {
   lastSavedXML = xml;
   lastSavedAt = new Date();
+  savedStackIdx = currentStackIdx();
   setDirty(false);
+}
+
+/**
+ * 导入失败 → 恢复上一个可用模型后，精确重算脏标记。
+ *
+ * 失败导入会把命令栈 clear（触发 commandStack.changed），恢复导入同样清栈，
+ * 两者都会让索引方案误判为脏；这里在恢复完成后做一次性的序列化比较（仅失败路径，
+ * 开销可忽略），然后作废存档游标（此后编辑一律置脏，直至下次保存）。
+ */
+async function rebaseDirtyAfterRestore() {
+  if (lastSavedXML === null) return;
+  savedStackIdx = null;
+  try {
+    let xml;
+    if (editorMode === 'dmn' && dmnModeler) {
+      ({ xml } = await dmnModeler.saveXML({ format: true }));
+    } else if (bpmnModeler) {
+      ({ xml } = await bpmnModeler.saveXML({ format: true }));
+    } else {
+      return;
+    }
+    setDirty(xml !== lastSavedXML);
+  } catch {
+    setDirty(true);
+  }
 }
 
 function setDirty(dirty) {
@@ -1384,7 +1431,7 @@ async function openDmnMetadataDialog() {
 
   // --- document level ---
   try {
-    const { xml } = await dmnModeler.saveXML({ format: true });
+    await dmnModeler.saveXML({ format: true });
     const defs = dmnModeler.getDefinitions();
     if (defs) {
       const docSection = metaSection('文档信息（dmn:Definitions）');
@@ -1682,18 +1729,8 @@ async function toggleXmlView() {
 
 async function copyXml() {
   if (!currentXml) return;
-  try {
-    await navigator.clipboard.writeText(currentXml);
-    setXmlStatus('完整 XML 已复制到剪贴板');
-  } catch {
-    const ta = document.createElement('textarea');
-    ta.value = currentXml;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    ta.remove();
-    setXmlStatus('完整 XML 已复制到剪贴板');
-  }
+  await copyTextToClipboard(currentXml);
+  setXmlStatus('完整 XML 已复制到剪贴板');
 }
 
 // --- XML editing (contenteditable on #xml-code) -----------------------------
@@ -1756,11 +1793,15 @@ async function applyXmlEdits() {
       err.failedXml = editedXml;
       // 恢复上一个可用模型：失败导入已清空画布/替换 definitions
       await restorePreviousModel(modeler, previousXml);
+      await rebaseDirtyAfterRestore();
       throw err;
     }
 
     // 与 setBpmnDiagram 相同的根元素可渲染校验
     assertRenderableBpmnRoot(modeler, warnings, editedXml);
+
+    // 导入成功 = 命令栈已重建，旧存档游标作废（non-dirty 判定完全交由 onBpmnStackChanged）
+    savedStackIdx = null;
 
     if (warnings && warnings.length) {
       console.warn('apply warnings', warnings);
@@ -1801,11 +1842,13 @@ function bindModelerEvents(modeler) {
     rebuildFlowNodeBackrefs(event.definitions);
   });
 
-  modeler.on('elements.changed', () => {
+  modeler.on('elements.changed', debounce(() => {
     // Keep back-references in sync with structural user edits
-    // (connections created / removed).
+    // (connections created / removed / reconnected).
+    // elements.changed 覆盖拖拽帧级元素更新，而重建是整树递归 + 数组重分配，
+    // 因此节流合并；lint 为异步调度，重建先于其触达（scripts/verify/check-backref-fix.mjs 守门）。
     rebuildFlowNodeBackrefs(modeler.getDefinitions());
-  });
+  }, 80));
 
   modeler.on('linting.completed', (event) => {
     renderLint(event.issues);
@@ -1828,10 +1871,8 @@ function bindModelerEvents(modeler) {
     setStatus('导入完成');
   });
 
-  modeler.on('commandStack.changed', refreshDirty);
-  modeler.on('commandStack.changed', debounce(() => {
-    if (xmlVisible) refreshXmlView();
-  }, 500));
+  modeler.on('commandStack.changed', onBpmnStackChanged);
+  modeler.on('commandStack.changed', debouncedXmlRefresh);
 }
 
 // --- lint ---------------------------------------------------------------------------
@@ -2197,16 +2238,7 @@ async function copyDmnDiagnosticInfo() {
   }
 
   const text = lines.join('\n');
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    ta.remove();
-  }
+  await copyTextToClipboard(text);
 
   setStatus('DMN 诊断信息已复制到剪贴板');
 }
@@ -2424,16 +2456,7 @@ async function copyDiagnosticInfo() {
 
   // ── copy to clipboard ──
   const text = lines.join('\n');
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    ta.remove();
-  }
+  await copyTextToClipboard(text);
 
   setStatus(`诊断信息已复制到剪贴板（${elementCount} 个元素）`);
 }
