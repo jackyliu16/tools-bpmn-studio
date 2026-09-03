@@ -61,7 +61,7 @@ const fakeSVGTransform = () => {
     type: 1,
     setTranslate(x, y) { matrix.e = x; matrix.f = y; },
     setScale(x, y) { matrix.a = x; matrix.d = y; },
-    setRotate(angle, cx, cy) { /* identity-ish stub */ },
+    setRotate(angle, cx, cy) { /* identity-ish stub */ void angle; void cx; void cy; },
     setMatrix(m) { Object.assign(matrix, m); }
   };
 };
@@ -307,8 +307,8 @@ let dmnModeler = null;
 
 const emptyDmnXML = `<?xml version="1.0" encoding="UTF-8"?>
 <definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/"
-             xmlns:di="https://www.omg.org/spec/DMN/20191111/DI/"
-             xmlns:dc="http://www.omg.org/spec/DMN/20191111/DC/"
+             xmlns:dmndi="https://www.omg.org/spec/DMN/20191111/DMNDI/"
+             xmlns:dc="http://www.omg.org/spec/DMN/20180521/DC/"
              id="Definitions_1"
              name="DRD"
              namespace="https://www.omg.org/spec/DMN/20191111/MODEL/">
@@ -322,12 +322,14 @@ const emptyDmnXML = `<?xml version="1.0" encoding="UTF-8"?>
       <output id="Output_1" name="Result" typeRef="string" />
     </decisionTable>
   </decision>
-  <di:DMNDI>
-    <di:DMNShape id="Decision_1_di" dmnElementRef="Decision_1">
-      <dc:Bounds x="160" y="100" width="180" height="80" />
-      <di:DMNLabel />
-    </di:DMNShape>
-  </di:DMNDI>
+  <dmndi:DMNDI>
+    <dmndi:DMNDiagram>
+      <dmndi:DMNShape id="Decision_1_di" dmnElementRef="Decision_1">
+        <dc:Bounds x="160" y="100" width="180" height="80" />
+        <dmndi:DMNLabel />
+      </dmndi:DMNShape>
+    </dmndi:DMNDiagram>
+  </dmndi:DMNDI>
 </definitions>`;
 
 dmnModeler = new DmnModeler({ container: '#js-dmn-canvas' });
@@ -335,16 +337,21 @@ check('dmn: modeler constructed', !!dmnModeler);
 
 {
   const { warnings } = await dmnModeler.importXML(emptyDmnXML);
-  // DMN DI warnings are expected in jsdom (no real SVG rendering)
-  const realWarnings = warnings.filter(w => !w.message.includes('unparsable content'));
-  check('dmn: importXML clean (ignoring DI warnings)', realWarnings.length === 0,
-    realWarnings.map((w) => w.message.split('\n')[0]).join('; '));
+  // 标准 DMNDI 命名空间下应零警告（曾用错误的 ".../DI/" 命名空间产生
+  // "unrecognized element <ns0:DMNDI>" 警告并丢失图形）
+  check('dmn: importXML clean (zero warnings)', warnings.length === 0,
+    warnings.map((w) => w.message.split('\n')[0]).join('; '));
 
   const views = dmnModeler.getViews();
   check('dmn: views available', views.length > 0, `${views.length} views`);
 
   const drdView = views.find(v => v.type === 'drd');
   check('dmn: DRD view exists', !!drdView);
+
+  // DI 解析成功后，含图形的 DMN 默认应落在 DRD 视图（vs 旧行为退回决策表）
+  const activeView = dmnModeler.getActiveView();
+  check('dmn: initial view is DRD', activeView && activeView.type === 'drd',
+    activeView && activeView.type);
 
   if (drdView) {
     await dmnModeler.open(drdView);
@@ -400,9 +407,9 @@ check('dmn-editor: exports EMPTY_DMN_XML', typeof MODULE_EMPTY_DMN === 'string' 
   check('dmn-editor: createDmnModeler works', !!testModeler);
 
   const { warnings } = await testModeler.importXML(MODULE_EMPTY_DMN);
-  // DMN DI warnings are expected in jsdom (no real SVG rendering)
+  // 标准 DMNDI 命名空间下应零警告
   const realWarnings2 = warnings.filter(w => !w.message.includes('unparsable content'));
-  check('dmn-editor: importXML clean (ignoring DI warnings)', realWarnings2.length === 0,
+  check('dmn-editor: importXML clean (zero warnings)', realWarnings2.length === 0,
     realWarnings2.map((w) => w.message.split('\n')[0]).join('; '));
 
   const definitions = testModeler.getDefinitions();

@@ -39,11 +39,17 @@ export function createDmnModeler(container, options = {}) {
 
 /**
  * Default DMN XML template (empty DRD with one decision).
+ *
+ * 使用 dmn-moddle 声明的标准 DMNDI 命名空间（https://www.omg.org/spec/DMN/20191111/DMNDI/，
+ * 前缀 dmndi，结构 DMNDI > DMNDiagram > DMNShape）。注意：不要使用 "https://www.omg.org/spec/
+ * DMN/20191111/DI/" —— 该命名空间不在 dmn-moddle 描述符中，导入会产生
+ * "unrecognized element <ns0:DMNDI>" 警告并丢失图形（DRD 会退回决策表视图）。
+ * dc 命名空间同样必须用描述符中的 http://www.omg.org/spec/DMN/20180521/DC/。
  */
 export const EMPTY_DMN_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/"
-             xmlns:di="https://www.omg.org/spec/DMN/20191111/DI/"
-             xmlns:dc="http://www.omg.org/spec/DMN/20191111/DC/"
+             xmlns:dmndi="https://www.omg.org/spec/DMN/20191111/DMNDI/"
+             xmlns:dc="http://www.omg.org/spec/DMN/20180521/DC/"
              id="Definitions_1"
              name="DRD"
              namespace="https://www.omg.org/spec/DMN/20191111/MODEL/">
@@ -57,12 +63,14 @@ export const EMPTY_DMN_XML = `<?xml version="1.0" encoding="UTF-8"?>
       <output id="Output_1" name="Result" typeRef="string" />
     </decisionTable>
   </decision>
-  <di:DMNDI>
-    <di:DMNShape id="Decision_1_di" dmnElementRef="Decision_1">
-      <dc:Bounds x="160" y="100" width="180" height="80" />
-      <di:DMNLabel />
-    </di:DMNShape>
-  </di:DMNDI>
+  <dmndi:DMNDI>
+    <dmndi:DMNDiagram>
+      <dmndi:DMNShape id="Decision_1_di" dmnElementRef="Decision_1">
+        <dc:Bounds x="160" y="100" width="180" height="80" />
+        <dmndi:DMNLabel />
+      </dmndi:DMNShape>
+    </dmndi:DMNDiagram>
+  </dmndi:DMNDI>
 </definitions>`;
 
 export default DmnModeler;
