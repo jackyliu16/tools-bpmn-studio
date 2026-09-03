@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// 仓库根（本脚本位于 scripts/verify/ 下，向上三级）
+const root = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 const { BpmnModdle } = await import('bpmn-moddle');
 const { Reader: ModdleXmlReader } = await import('moddle-xml');

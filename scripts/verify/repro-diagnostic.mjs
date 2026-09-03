@@ -13,12 +13,12 @@
  */
 import { JSDOM } from 'jsdom';
 import cssEscape from 'css.escape';
-import { readFileSync, mkdtempSync, writeFileSync as wfs, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import os from 'node:os';
 
-const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// 仓库根（本脚本位于 scripts/verify/ 下，向上三级）
+const root = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 const dom = new JSDOM(`<!DOCTYPE html><html><body>
   <div id="js-canvas"></div><div id="js-properties-panel"></div>

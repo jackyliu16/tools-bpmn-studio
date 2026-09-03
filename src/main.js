@@ -126,7 +126,7 @@ import bpmnlintPkg from 'bpmnlint/package.json';
 // diagram itself.  Rebuilding is idempotent: it resets the arrays and
 // repopulates them from the flow references.  Verified: with the
 // back-references populated the false positives vanish while genuinely
-// disconnected elements are still detected (scripts/check-backref-fix.mjs).
+// disconnected elements are still detected (scripts/verify/check-backref-fix.mjs).
 function rebuildFlowNodeBackrefs(definitions) {
   if (!definitions) return;
 

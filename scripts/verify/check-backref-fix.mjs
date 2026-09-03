@@ -9,7 +9,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// 仓库根（本脚本位于 scripts/verify/ 下，向上三级）
+const root = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 const { BpmnModdle } = await import('bpmn-moddle');
 const { Reader: ModdleXmlReader } = await import('moddle-xml');
@@ -35,7 +36,6 @@ function populateBackRefs(container) {
   }
   for (const fe of container.flowElements || []) {
     if (fe.$type === 'bpmn:SequenceFlow' || fe.$type === 'bpmn:MessageFlow') {
-      const src = container.flowElements.find(e => e.id === fe.sourceRef && e.id === (fe.sourceRef?.id || fe.sourceRef));
       const source = typeof fe.sourceRef === 'string' ? container.flowElements.find(e => e.id === fe.sourceRef) : fe.sourceRef;
       const target = typeof fe.targetRef === 'string' ? container.flowElements.find(e => e.id === fe.targetRef) : fe.targetRef;
       if (source && typeof source.outgoing === 'undefined') source.outgoing = [];

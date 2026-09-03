@@ -14,7 +14,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// 仓库根（本脚本位于 scripts/verify/ 下，向上三级）
+const root = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 // --- minimal DOM (same as smoke.mjs) ----------------------------------------
 const dom = new JSDOM(

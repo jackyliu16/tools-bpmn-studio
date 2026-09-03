@@ -2,8 +2,8 @@
 
 > Draft for filing against `bpmn-io/bpmnlint` (cc `bpmn-io/bpmn-js-bpmnlint`, `bpmn-io/moddle-xml`).
 > Verified locally with the exact versions listed below, using both the bpmnlint CLI
-> and a minimal bpmn-js modeler. Evidence scripts: `scripts/plain-node-check.mjs`,
-> `scripts/check-backref-fix.mjs`.
+> and a minimal bpmn-js modeler. Evidence scripts: `scripts/verify/plain-node-check.mjs`,
+> `scripts/verify/check-backref-fix.mjs`.
 
 ## TL;DR
 
@@ -158,4 +158,4 @@ function rebuildFlowNodeBackrefs(definitions) {
 
 Verified: with the back-references populated, all 7 false positives disappear,
 while genuinely disconnected / implicit start/end elements are **still**
-reported (see `scripts/verify-fix.mjs`).
+reported (see `scripts/verify/verify-fix.mjs`).
