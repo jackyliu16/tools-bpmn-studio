@@ -5,18 +5,73 @@
  * dialogs. The heavy lifting (bpmn-js modeler UI) lives entirely in the
  * bundled renderer (dist/index.html).
  */
-const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 
 const isDev = !app.isPackaged;
 
+const DEFAULT_WINDOW = { width: 1480, height: 920 };
+const MIN_WINDOW = { width: 940, height: 560 };
+
+// --- window state persistence ------------------------------------------------
+// 记忆窗口大小/位置/最大化状态，重启后恢复（首次启动保持「最大化」的既有行为）。
+// 单独存 window-state.json，避免与渲染进程用的 prefs:get/set 键值混在一起。
+function windowStateFile() {
+  return path.join(app.getPath('userData'), 'window-state.json');
+}
+
+function loadWindowState() {
+  try {
+    const state = JSON.parse(fs.readFileSync(windowStateFile(), 'utf-8'));
+    if (!state || !state.bounds || typeof state.bounds.width !== 'number') return null;
+    return state;
+  } catch {
+    return null;
+  }
+}
+
+function saveWindowState(win) {
+  try {
+    const bounds = win.getNormalBounds();
+    const state = {
+      bounds: {
+        x: bounds.x,
+        y: bounds.y,
+        width: Math.max(MIN_WINDOW.width, Math.round(bounds.width)),
+        height: Math.max(MIN_WINDOW.height, Math.round(bounds.height))
+      },
+      maximized: win.isMaximized()
+    };
+    fs.mkdirSync(path.dirname(windowStateFile()), { recursive: true });
+    fs.writeFileSync(windowStateFile(), JSON.stringify(state, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('saveWindowState failed', err);
+  }
+}
+
+/** 保存的窗口区域是否至少与某个显示器的工作区相交（防拔屏后窗口开到屏外） */
+function boundsVisible(bounds) {
+  const displays = screen.getAllDisplays();
+  return displays.some((d) => {
+    const wa = d.workArea;
+    return bounds.x < wa.x + wa.width && bounds.x + bounds.width > wa.x &&
+           bounds.y < wa.y + wa.height && bounds.y + bounds.height > wa.y;
+  });
+}
+
 function createWindow() {
+  const saved = loadWindowState();
+  const restoreBounds = saved && saved.bounds && boundsVisible(saved.bounds);
+  const winBounds = restoreBounds ? saved.bounds : DEFAULT_WINDOW;
+
   const win = new BrowserWindow({
-    width: 1480,
-    height: 920,
-    minWidth: 940,
-    minHeight: 560,
+    width: winBounds.width,
+    height: winBounds.height,
+    x: restoreBounds ? saved.bounds.x : undefined,
+    y: restoreBounds ? saved.bounds.y : undefined,
+    minWidth: MIN_WINDOW.width,
+    minHeight: MIN_WINDOW.height,
     backgroundColor: '#f6f7f9',
     title: 'BPMN Studio',
     webPreferences: {
@@ -27,9 +82,12 @@ function createWindow() {
     }
   });
 
-  // Start maximized so the window fills the screen on launch,
-  // but keeps the native title-bar for moving / resizing.
-  win.maximize();
+  // 无存档状态时启动最大化（既有行为）；有存档则按存档恢复（含最大化）
+  if (!restoreBounds || saved.maximized !== false) {
+    win.maximize();
+  }
+
+  win.on('close', () => saveWindowState(win));
 
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   return win;
@@ -57,6 +115,7 @@ function buildMenu() {
         { label: '导出 SVG…', click: () => sendToFocused('export-svg') },
         { label: '导出 PNG…', accelerator: 'CmdOrCtrl+Shift+P', click: () => sendToFocused('export-png') },
         { type: 'separator' },
+        { label: '关闭窗口', accelerator: 'CmdOrCtrl+W', role: 'close' },
         isDev ? { role: 'reload' } : null,
         { role: 'quit', label: '退出' }
       ].filter(Boolean)
