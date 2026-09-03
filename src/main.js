@@ -266,18 +266,41 @@ let dmnModeler = null;
 let currentDmnView = 'drd'; // 'drd' | 'decisionTable' | 'literalExpression'
 
 // --- theme state ---------------------------------------------------------
+// 持久化：Electron 优先走主进程 pref store（sandbox + file:// 下 localStorage 不落盘），
+// 浏览器回退 localStorage（两者双写，与 properties-panel 收起状态同一模式）。
 const THEME_KEY = 'bpmn-studio-theme';
+const THEME_PREF = 'ui.theme';
 const $html = document.documentElement;
 
 const studio = window.bpmnStudio || null;
 
 // --- theme helpers -------------------------------------------------------
-function getStoredTheme() {
-  try { return localStorage.getItem(THEME_KEY); } catch { return null; }
+/**
+ * 读取持久化的主题偏好（'dark' | 'light' | 'auto' | null）。
+ * 优先 Electron pref store；无 bridge 或未设置时回退 localStorage。
+ */
+async function loadStoredTheme() {
+  if (studio && typeof studio.getPreference === 'function') {
+    try {
+      const value = await studio.getPreference(THEME_PREF);
+      if (value === 'dark' || value === 'light' || value === 'auto') return value;
+    } catch { /* bridge unavailable */ }
+  }
+  try {
+    const legacy = localStorage.getItem(THEME_KEY);
+    if (legacy === 'dark' || legacy === 'light') return legacy;
+  } catch { /* storage unavailable */ }
+  return null;
 }
 
-function storeTheme(theme) {
-  try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
+/** 持久化主题偏好（pref store + localStorage 双写，best-effort） */
+function persistTheme(theme) {
+  if (studio && typeof studio.setPreference === 'function') {
+    studio.setPreference(THEME_PREF, theme).catch(() => {});
+  }
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch { /* ignore */ }
 }
 
 function applyTheme(theme) {
@@ -298,7 +321,7 @@ function currentTheme() {
 function toggleTheme() {
   const next = currentTheme() === 'dark' ? 'light' : 'dark';
   $html.setAttribute('data-theme', next);
-  storeTheme(next);
+  persistTheme(next);
   updateThemeButton();
   setStatus(next === 'dark' ? '已切换到深色主题' : '已切换到浅色主题');
 }
@@ -312,13 +335,12 @@ function updateThemeButton() {
   btn.classList.toggle('active', dark);
 }
 
-// Apply stored or system theme on startup
-applyTheme(getStoredTheme() || 'auto');
+// 启动主题应用移入底部 async boot（需 await pref store 读取）
 
 // Listen for system theme changes when in auto mode
 if (window.matchMedia) {
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if (!getStoredTheme()) applyTheme('auto');
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', async () => {
+    if (!(await loadStoredTheme())) applyTheme('auto');
   });
 }
 
@@ -1213,6 +1235,8 @@ function updateTitle() {
   const title = currentFileName + (isDirty ? ' *' : '') + ' — BPMN Studio';
   document.title = title;
   if (studio) studio.setTitle(title);
+  // 工具栏文件名标签（静态 HTML 初值 "untitled.bpmn"，需随打开/新建同步）
+  if (els.diagramName) els.diagramName.textContent = currentFileName;
 }
 
 function setStatus(text) {
@@ -2608,11 +2632,37 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// --- 全局兜底：未捕获的异步错误/运行时异常也走统一错误卡（避免静默白屏） ----------
+// 仅当错误未经 showError 呈现时弹出（lastError 由 showError/hideError 维护）。
+window.addEventListener('unhandledrejection', (event) => {
+  if (lastError) return;
+  const err = event.reason;
+  if (!err) return;
+  showError({
+    title: '未捕获的异步错误',
+    message: (err && err.message) || String(err),
+    error: err instanceof Error ? err : undefined
+  });
+});
+
+window.addEventListener('error', (event) => {
+  if (lastError) return;
+  showError({
+    title: '未捕获的运行时错误',
+    message: event.message || '发生未知错误',
+    error: event.error instanceof Error ? event.error : undefined
+  });
+});
+
 // --- boot ------------------------------------------------------------------------------------
-// restore persisted UI state (collapsed properties panel) before first diagram render
+// restore persisted UI state (collapsed properties panel + theme) before first diagram render
 (async () => {
   try {
     if (await readPanelCollapsedState()) setPropertiesPanelCollapsed(true);
   } catch { /* never let boot fail on persistence */ }
+  try {
+    const theme = await loadStoredTheme();
+    applyTheme(theme || 'auto');
+  } catch { /* never let boot fail on theme */ }
   createNewDiagram();
 })();
