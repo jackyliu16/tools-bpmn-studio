@@ -277,7 +277,7 @@ Electron 集成方式：预加载脚本注入 `window.bpmnStudio`，渲染进程
 | bpmn-js-bpmnlint / bpmnlint / bpmnlint-plugin-camunda | 0.24 / 11 / 0.6 | 模型校验 |
 | bpmn-js-token-simulation | 0.40 | 令牌模拟 |
 | vite | 8 | 构建（dev / build / preview） |
-| electron / electron-builder | 29.4.6 / 26 | 桌面壳与打包 |
+| electron / electron-builder | 44.2.0 / 26 | 桌面壳与打包 |
 
 ### 依赖升级政策（重要）
 
