@@ -1,6 +1,6 @@
 {
   "name": "bpmn-studio",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "A nearly full-featured, standalone BPMN 2.0 / DMN editor — run in any browser (npm) or as a packaged desktop app (Electron).",
   "type": "module",
   "main": "electron/main.cjs",
