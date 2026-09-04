@@ -3,8 +3,9 @@
  * jsdom (via vite-node + css-stub config) and drives the XML editing flow.
  */
 import { JSDOM } from 'jsdom';
-import cssEscape from 'css.escape';
 import { readFileSync } from 'node:fs';
+
+import { createTester, installCssEscape } from './lib/testkit.mjs';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const dom = new JSDOM(html, { pretendToBeVisual: true, url: 'http://localhost/' });
@@ -23,7 +24,7 @@ globalThis.Node = window.Node;
 globalThis.Event = window.Event;
 globalThis.DOMParser = window.DOMParser;
 globalThis.CSS = window.CSS || {};
-globalThis.CSS.escape = cssEscape;
+installCssEscape();
 globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 globalThis.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} takeRecords() { return []; } };
 window.matchMedia = window.matchMedia || (() => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
@@ -52,11 +53,7 @@ window.HTMLCanvasElement.prototype.getContext = function () {
   };
 };
 
-const results = [];
-const check = (name, ok, detail = '') => {
-  results.push({ name, ok });
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`);
-};
+const { check, finish } = createTester();
 
 // boot the REAL app shell (jsdom does not execute <script type="module">)
 await import('/src/main.js');
@@ -206,7 +203,5 @@ const selection = lintModeler.get('selection').get();
 check('clicking lint row selects target element', selection.some((s) => s.id === 'Task_NoLabel'),
   selection.map((s) => s.id).join(','));
 
-const failed = results.filter((r) => !r.ok).length;
-console.log(`\n${results.length - failed}/${results.length} UI checks passed`);
 window.close && window.close();
-process.exit(failed ? 1 : 0);
+process.exit(finish('UI checks'));

@@ -13,6 +13,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+import { createTester } from './lib/testkit.mjs';
+
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 const {
@@ -29,11 +31,7 @@ const {
   ruleDocUrl
 } = await import(path.join(root, 'src', 'lint-l10n.js'));
 
-const results = [];
-const check = (name, ok, detail = '') => {
-  results.push({ name, ok });
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`);
-};
+const { check, finish } = createTester();
 
 // ── 1. extractParseLocation ──────────────────────────────────────────────
 {
@@ -185,6 +183,4 @@ const check = (name, ok, detail = '') => {
   check('lintCategoryLabel: 未知级别原样返回', lintCategoryLabel('xx') === 'xx');
 }
 
-const failed = results.filter((r) => !r.ok).length;
-console.log(`\n${results.length - failed}/${results.length} checks passed`);
-process.exit(failed ? 1 : 0);
+process.exit(finish());

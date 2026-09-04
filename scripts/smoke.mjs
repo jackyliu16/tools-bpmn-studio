@@ -12,11 +12,12 @@
  * Usage: npx vite-node scripts/smoke.mjs
  */
 import { JSDOM } from 'jsdom';
-import cssEscape from 'css.escape';
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+
+import { createTester, installCssEscape } from './lib/testkit.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -90,8 +91,7 @@ Object.defineProperty(window.SVGElement.prototype, 'transform', {
 });
 
 // jsdom lacks CSS.escape / ResizeObserver / matchMedia
-globalThis.CSS = window.CSS || {};
-globalThis.CSS.escape = cssEscape;
+installCssEscape();
 globalThis.ResizeObserver = class {
   observe() {}
   unobserve() {}
@@ -184,11 +184,7 @@ const { default: TokenSimulationModule } = await import('bpmn-js-token-simulatio
 const { default: lintConfig } = await import(path.join(root, 'src', 'lint-config.js'));
 
 // --- assertions ----------------------------------------------------------------
-const results = [];
-function check(name, ok, detail = '') {
-  results.push({ name, ok });
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`);
-}
+const { check, finish } = createTester();
 
 check('lint config shape { config, resolver }', !!(lintConfig && lintConfig.config && lintConfig.resolver));
 check('camunda moddle parses', !!(camundaModdle && camundaModdle.prefix));
@@ -419,6 +415,4 @@ check('dmn-editor: exports EMPTY_DMN_XML', typeof MODULE_EMPTY_DMN === 'string' 
 }
 
 // --- summary ----------------------------------------------------------------
-const failed = results.filter((r) => !r.ok).length;
-console.log(`\n${results.length - failed}/${results.length} checks passed`);
-process.exit(failed ? 1 : 0);
+process.exit(finish());
