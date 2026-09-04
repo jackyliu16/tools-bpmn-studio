@@ -40,7 +40,8 @@ app.whenReady().then(async () => {
     errors.push(`did-fail-load: ${code} ${desc}`);
   });
 
-  win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  // ?debug=1：生产 dist 下 window.__bpmnModeler 等调试全局默认关闭，验证脚本需要它们
+  win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query: { debug: '1' } });
 
   // give the renderer time to boot the modeler and import the starter diagram
   await new Promise((r) => setTimeout(r, 6000));

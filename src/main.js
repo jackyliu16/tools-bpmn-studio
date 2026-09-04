@@ -274,6 +274,9 @@ const $html = document.documentElement;
 
 const studio = window.bpmnStudio || null;
 
+// 调试全局（window.__bpmnModeler / __dmnModeler）仅开发模式或显式 ?debug=1 时暴露进生产包。
+const debugGlobals = import.meta.env.DEV || new URLSearchParams(location.search).has('debug');
+
 // --- theme helpers -------------------------------------------------------
 /**
  * 读取持久化的主题偏好（'dark' | 'light' | 'auto' | null）。
@@ -571,7 +574,7 @@ function createModeler(platform) {
 
   currentPlatform = platform;
   bindModelerEvents(modeler);
-  window.__bpmnModeler = modeler;
+  if (debugGlobals) window.__bpmnModeler = modeler;
 
   setStatus(`就绪（${cfg.label}）- 从左侧工具栏拖拽元素开始建模`);
   return modeler;
@@ -599,7 +602,7 @@ function createDmnEditor() {
   const modeler = createDmnModeler('#js-dmn-canvas');
 
   bindDmnModelerEvents(modeler);
-  window.__dmnModeler = modeler;
+  if (debugGlobals) window.__dmnModeler = modeler;
 
   els.dmnViewTabs.classList.remove('hidden');
   setStatus('就绪（DMN 决策建模）— 从 DRD 视图开始建模');
