@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- CSP：dev（vite 同源 + HMR ws:）与 prod（Electron file:// 'self' 同 scheme）均可用；
+       style 保留 'unsafe-inline'（vite 注入 + 运行时内联样式），script 严格 'self'。 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws:; worker-src 'self' blob:">
   <title>BPMN Studio</title>
 </head>
 <body>
