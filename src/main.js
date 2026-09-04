@@ -684,6 +684,43 @@ function dmnGet(service) {
   return viewer ? viewer.get(service) : null;
 }
 
+// --- active-modeler helpers (BPMN/DMN 双路统一调用点) ----------------------
+/** 当前模式的活跃 modeler（bpmnModeler 或 dmnModeler），无则 null */
+function getActiveModeler() {
+  return editorMode === 'dmn' ? dmnModeler : bpmnModeler;
+}
+
+/**
+ * 按当前模式取 diagram-js 服务（BPMN 走 modeler.get，DMN 走 active viewer）。
+ * 服务缺失时返回 null（不抛）。
+ */
+function activeService(module) {
+  const modeler = getActiveModeler();
+  if (!modeler) return null;
+  if (editorMode === 'dmn') return dmnGet(module);
+  try {
+    return modeler.get(module);
+  } catch {
+    return null;
+  }
+}
+
+/** 导出当前模型的格式化 XML；无模型时返回 null */
+async function saveActiveXml() {
+  const modeler = getActiveModeler();
+  if (!modeler) return null;
+  const { xml } = await modeler.saveXML({ format: true });
+  return xml;
+}
+
+/** 导出当前模型的 SVG；无模型时返回 null */
+async function saveActiveSvg() {
+  const modeler = getActiveModeler();
+  if (!modeler) return null;
+  const { svg } = await modeler.saveSVG({ format: true });
+  return svg;
+}
+
 function updateDmnViewTabs() {
   const views = {
     'drd': els.btnDmnDrd,
@@ -795,14 +832,7 @@ async function setDmnDiagram(xml, name, filePath) {
 /** 当前 BPMN/DMN 模型的 XML 快照（失败恢复用）；无模型时返回 null */
 async function snapshotCurrentXml() {
   try {
-    if (editorMode === 'dmn' && dmnModeler) {
-      const { xml } = await dmnModeler.saveXML({ format: true });
-      return xml;
-    }
-    if (bpmnModeler) {
-      const { xml } = await bpmnModeler.saveXML({ format: true });
-      return xml;
-    }
+    return await saveActiveXml();
   } catch { /* 快照失败则无恢复能力 */ }
   return null;
 }
@@ -1016,13 +1046,8 @@ function basename(p) {
 async function saveFile(forceAs = false) {
   let xml;
   try {
-    if (editorMode === 'dmn' && dmnModeler) {
-      ({ xml } = await dmnModeler.saveXML({ format: true }));
-    } else if (bpmnModeler) {
-      ({ xml } = await bpmnModeler.saveXML({ format: true }));
-    } else {
-      return;
-    }
+    xml = await saveActiveXml();
+    if (xml === null) return;
   } catch (err) {
     console.error(err);
     showError({ title: '导出 XML 失败', message: err.message || String(err), error: err });
@@ -1059,14 +1084,8 @@ async function saveFile(forceAs = false) {
 
 async function exportSVG() {
   try {
-    let svg;
-    if (editorMode === 'dmn' && dmnModeler) {
-      ({ svg } = await dmnModeler.saveSVG({ format: true }));
-    } else if (bpmnModeler) {
-      ({ svg } = await bpmnModeler.saveSVG({ format: true }));
-    } else {
-      return;
-    }
+    const svg = await saveActiveSvg();
+    if (svg === null) return;
     const baseName = currentFileName.replace(/\.(bpmn|dmn)$/i, '');
     if (studio) {
       const res = await studio.exportFile({ name: baseName + '.svg', content: svg });
@@ -1086,14 +1105,8 @@ async function exportSVG() {
 
 async function exportPNG() {
   try {
-    let svg;
-    if (editorMode === 'dmn' && dmnModeler) {
-      ({ svg } = await dmnModeler.saveSVG({ format: true }));
-    } else if (bpmnModeler) {
-      ({ svg } = await bpmnModeler.saveSVG({ format: true }));
-    } else {
-      return;
-    }
+    const svg = await saveActiveSvg();
+    if (svg === null) return;
 
     const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(svgBlob);
@@ -1210,14 +1223,8 @@ async function rebaseDirtyAfterRestore() {
   if (lastSavedXML === null) return;
   savedStackIdx = null;
   try {
-    let xml;
-    if (editorMode === 'dmn' && dmnModeler) {
-      ({ xml } = await dmnModeler.saveXML({ format: true }));
-    } else if (bpmnModeler) {
-      ({ xml } = await bpmnModeler.saveXML({ format: true }));
-    } else {
-      return;
-    }
+    const xml = await saveActiveXml();
+    if (xml === null) return;
     setDirty(xml !== lastSavedXML);
   } catch {
     setDirty(true);
@@ -1300,17 +1307,22 @@ function metaStat(num, label) {
   return stat;
 }
 
+/** 文件信息区公共行（BPMN/DMN 元数据弹窗共用） */
+function fileInfoRows(extra = []) {
+  return [
+    metaRow('文件名', currentFileName, true),
+    metaRow('文件路径', currentFilePath || '（未保存 / 浏览器环境）', true),
+    metaRow('是否已修改', isDirty ? '是（有未保存的修改）' : '否'),
+    metaRow('保存时间', lastSavedAt ? lastSavedAt.toLocaleString() : '从未保存')
+  ].concat(extra);
+}
+
 async function collectMetadata() {
   const file = {};
   const doc = {};
   const stats = {};
 
   // --- file level ---
-  file.name = currentFileName;
-  file.path = currentFilePath || '（未保存 / 浏览器环境）';
-  file.dirty = isDirty ? '是（有未保存的修改）' : '否';
-  file.savedAt = lastSavedAt ? lastSavedAt.toLocaleString() : '从未保存';
-
   if (studio && currentFilePath) {
     try {
       const st = await studio.statFile(currentFilePath);
@@ -1390,12 +1402,10 @@ async function openMetadataDialog() {
 
   const fileSection = metaSection('文件信息');
   fileSection.append(
-    metaRow('文件名', file.name, true),
-    metaRow('文件路径', file.path, true),
-    metaRow('是否已修改', file.dirty),
-    metaRow('保存时间', file.savedAt),
-    metaRow('文件大小', file.size, true),
-    metaRow('磁盘修改时间', file.modifiedAt)
+    ...fileInfoRows([
+      metaRow('文件大小', file.size, true),
+      metaRow('磁盘修改时间', file.modifiedAt)
+    ])
   );
   content.appendChild(fileSection);
 
@@ -1445,11 +1455,7 @@ async function openDmnMetadataDialog() {
   // --- file level ---
   const fileSection = metaSection('文件信息');
   fileSection.append(
-    metaRow('文件名', currentFileName, true),
-    metaRow('文件路径', currentFilePath || '（未保存 / 浏览器环境）', true),
-    metaRow('是否已修改', isDirty ? '是（有未保存的修改）' : '否'),
-    metaRow('保存时间', lastSavedAt ? lastSavedAt.toLocaleString() : '从未保存'),
-    metaRow('文件类型', 'DMN 决策模型')
+    ...fileInfoRows([metaRow('文件类型', 'DMN 决策模型')])
   );
   content.appendChild(fileSection);
 
@@ -1642,17 +1648,11 @@ function renderXmlView(spans) {
 
 function getCurrentSelection() {
   try {
-    if (editorMode === 'dmn' && dmnModeler) {
-      const selection = dmnGet('selection');
-      return selection ? (selection.get() || []) : [];
-    }
-    if (bpmnModeler) {
-      return bpmnModeler.get('selection').get() || [];
-    }
+    const selection = activeService('selection');
+    return selection ? (selection.get() || []) : [];
   } catch {
     return [];
   }
-  return [];
 }
 
 function applyXmlSelection(selection) {
@@ -1720,15 +1720,10 @@ async function refreshXmlView() {
   // 任何一次模型同步刷新都退出「脱离模式」，恢复 XML 视图镜像活模型语义
   xmlDetached = false;
   if (!xmlVisible || xmlEditing) return;
-  if (editorMode === 'dmn' && !dmnModeler) return;
-  if (editorMode === 'bpmn' && !bpmnModeler) return;
+  if (!getActiveModeler()) return;
   try {
-    let xml;
-    if (editorMode === 'dmn' && dmnModeler) {
-      ({ xml } = await dmnModeler.saveXML({ format: true }));
-    } else {
-      ({ xml } = await bpmnModeler.saveXML({ format: true }));
-    }
+    const xml = await saveActiveXml();
+    if (xml === null) return;
     currentXml = xml;
     applyXmlSelection(getCurrentSelection());
   } catch (err) {
@@ -2532,55 +2527,37 @@ if (studio) {
       case 'export-svg': return exportSVG();
       case 'export-png': return exportPNG();
       case 'undo': {
-        if (editorMode === 'dmn' && dmnModeler) {
-          try { const u = dmnGet('undo'); if (u) u.undo(); } catch { /* ignore */ }
-        } else if (bpmnModeler) {
-          bpmnModeler.get('undo').undo();
-        }
+        const u = activeService('undo');
+        if (u) u.undo();
         return;
       }
       case 'redo': {
-        if (editorMode === 'dmn' && dmnModeler) {
-          try { const u = dmnGet('undo'); if (u) u.redo(); } catch { /* ignore */ }
-        } else if (bpmnModeler) {
-          bpmnModeler.get('undo').redo();
-        }
+        const u = activeService('undo');
+        if (u) u.redo();
         return;
       }
       case 'zoom-in': {
-        if (editorMode === 'dmn' && dmnModeler) {
-          try { const c = dmnGet('canvas'); if (c) c.zoom({ x: 0, y: 0 }, 1.25); } catch { /* ignore */ }
-        } else if (bpmnModeler) {
-          bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 1.25);
-          setZoomStatus();
-        }
+        const c = activeService('canvas');
+        if (c) c.zoom({ x: 0, y: 0 }, 1.25);
+        if (editorMode !== 'dmn') setZoomStatus();
         return;
       }
       case 'zoom-out': {
-        if (editorMode === 'dmn' && dmnModeler) {
-          try { const c = dmnGet('canvas'); if (c) c.zoom({ x: 0, y: 0 }, 0.8); } catch { /* ignore */ }
-        } else if (bpmnModeler) {
-          bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 0.8);
-          setZoomStatus();
-        }
+        const c = activeService('canvas');
+        if (c) c.zoom({ x: 0, y: 0 }, 0.8);
+        if (editorMode !== 'dmn') setZoomStatus();
         return;
       }
       case 'zoom-reset': {
-        if (editorMode === 'dmn' && dmnModeler) {
-          try { const c = dmnGet('canvas'); if (c) c.zoom(1, { x: 0, y: 0 }); } catch { /* ignore */ }
-        } else if (bpmnModeler) {
-          bpmnModeler.get('canvas').zoom(1, { x: 0, y: 0 });
-          setZoomStatus();
-        }
+        const c = activeService('canvas');
+        if (c) c.zoom(1, { x: 0, y: 0 });
+        if (editorMode !== 'dmn') setZoomStatus();
         return;
       }
       case 'zoom-fit': {
-        if (editorMode === 'dmn' && dmnModeler) {
-          try { const c = dmnGet('canvas'); if (c) c.zoom('fit-viewport', 'auto'); } catch { /* ignore */ }
-        } else if (bpmnModeler) {
-          bpmnModeler.get('canvas').zoom('fit-viewport', 'auto');
-          setZoomStatus();
-        }
+        const c = activeService('canvas');
+        if (c) c.zoom('fit-viewport', 'auto');
+        if (editorMode !== 'dmn') setZoomStatus();
         return;
       }
       case 'toggle-minimap': return toggleMinimap();
@@ -2616,19 +2593,13 @@ document.addEventListener('keydown', (e) => {
   else if (k === 'd' && e.shiftKey) { e.preventDefault(); toggleTheme(); }
   else if (k === 'z') {
     e.preventDefault();
-    if (editorMode === 'dmn' && dmnModeler) {
-      try { const u = dmnGet('undo'); if (u) { e.shiftKey ? u.redo() : u.undo(); } } catch { /* ignore */ }
-    } else if (bpmnModeler) {
-      e.shiftKey ? bpmnModeler.get('undo').redo() : bpmnModeler.get('undo').undo();
-    }
+    const u = activeService('undo');
+    if (u) { e.shiftKey ? u.redo() : u.undo(); }
   }
   else if (k === 'y') {
     e.preventDefault();
-    if (editorMode === 'dmn' && dmnModeler) {
-      try { const u = dmnGet('undo'); if (u) u.redo(); } catch { /* ignore */ }
-    } else if (bpmnModeler) {
-      bpmnModeler.get('undo').redo();
-    }
+    const u = activeService('undo');
+    if (u) u.redo();
   }
 });
 
