@@ -671,6 +671,10 @@ function bindDmnModelerEvents(modeler) {
   // DMN 每个视图（drd/决策表/文字表达式/boxedExpression）是独立 diagram-js 实例，
   // 各有独立命令栈；viewer.created 于每类视图首次打开时触发一次（viewer 惰性创建并复用）。
   modeler.on('viewer.created', ({ viewer }) => {
+    // 缩放比例标签跟随活跃视图（滚轮/键盘缩放也更新）
+    viewer.on('canvas.viewbox.changed', debounce(() => {
+      if (dmnModeler === modeler && modeler.getActiveViewer() === viewer) setZoomStatus();
+    }, 100));
     viewer.on('commandStack.changed', () => {
       // 近似脏跟踪：任一视图有命令变更即置脏，保存时清零。
       // DMN 无跨视图统一命令栈，撤销回保存点不会自动清除星号（BPMN 侧是精确的）。
@@ -742,6 +746,7 @@ async function switchDmnView(viewType) {
     const targetView = views.find(v => v.type === viewType);
     if (targetView) {
       await dmnModeler.open(targetView);
+      setZoomStatus();
     }
   } catch (err) {
     console.error('switch DMN view failed', err);
@@ -828,6 +833,7 @@ async function setDmnDiagram(xml, name, filePath) {
     const canvas = dmnGet('canvas');
     if (canvas) canvas.zoom('fit-viewport', 'auto');
   } catch { /* canvas may not be available in all views */ }
+  setZoomStatus();
 
   if (xmlVisible) refreshXmlView();
 }
@@ -1254,10 +1260,32 @@ function setStatus(text) {
 }
 
 function setZoomStatus() {
-  if (!bpmnModeler) return;
-  const canvas = bpmnModeler.get('canvas');
+  const canvas = activeService('canvas');
+  if (!canvas) return;
   const zoom = canvas.zoom();
+  if (typeof zoom !== 'number' || !Number.isFinite(zoom)) return;
   els.zoomLevel.textContent = Math.round(zoom * 100) + '%';
+}
+
+/**
+ * 工具栏/菜单缩放：diagram-js 的 zoom(newScale, center) 第一参数是【绝对】缩放倍率，
+ * 不是步进乘数——相对缩放须基于当前 zoom 计算，否则会把视图矩阵写坏（NaN → 回退 100%）。
+ */
+function zoomBy(factor) {
+  const canvas = activeService('canvas');
+  if (!canvas) return;
+  const current = canvas.zoom();
+  if (typeof current !== 'number' || !Number.isFinite(current) || current <= 0) return;
+  canvas.zoom(current * factor);
+  setZoomStatus();
+}
+
+/** 适应画布（BPMN/DMN 通用），并同步缩放比例标签 */
+function zoomFit() {
+  const canvas = activeService('canvas');
+  if (!canvas) return;
+  canvas.zoom('fit-viewport', 'auto');
+  setZoomStatus();
 }
 
 // --- metadata dialog --------------------------------------------------------------
@@ -2164,9 +2192,9 @@ $('#btn-export-svg').addEventListener('click', exportSVG);
 $('#btn-export-png').addEventListener('click', exportPNG);
 $('#btn-undo').addEventListener('click', () => bpmnModeler && bpmnModeler.get('undo').undo());
 $('#btn-redo').addEventListener('click', () => bpmnModeler && bpmnModeler.get('undo').redo());
-$('#btn-zoom-in').addEventListener('click', () => { if (bpmnModeler) { bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 1.25); setZoomStatus(); }});
-$('#btn-zoom-out').addEventListener('click', () => { if (bpmnModeler) { bpmnModeler.get('canvas').zoom({ x: 0, y: 0 }, 0.8); setZoomStatus(); }});
-$('#btn-zoom-fit').addEventListener('click', () => bpmnModeler && bpmnModeler.get('canvas').zoom('fit-viewport', 'auto'));
+$('#btn-zoom-in').addEventListener('click', () => zoomBy(1.25));
+$('#btn-zoom-out').addEventListener('click', () => zoomBy(0.8));
+$('#btn-zoom-fit').addEventListener('click', zoomFit);
 $('#btn-search').addEventListener('click', openSearch);
 $('#btn-minimap').addEventListener('click', toggleMinimap);
 $('#btn-simulate').addEventListener('click', toggleSimulation);
@@ -2539,30 +2567,15 @@ if (studio) {
         if (u) u.redo();
         return;
       }
-      case 'zoom-in': {
-        const c = activeService('canvas');
-        if (c) c.zoom({ x: 0, y: 0 }, 1.25);
-        if (editorMode !== 'dmn') setZoomStatus();
-        return;
-      }
-      case 'zoom-out': {
-        const c = activeService('canvas');
-        if (c) c.zoom({ x: 0, y: 0 }, 0.8);
-        if (editorMode !== 'dmn') setZoomStatus();
-        return;
-      }
+      case 'zoom-in': return zoomBy(1.25);
+      case 'zoom-out': return zoomBy(0.8);
       case 'zoom-reset': {
         const c = activeService('canvas');
-        if (c) c.zoom(1, { x: 0, y: 0 });
-        if (editorMode !== 'dmn') setZoomStatus();
+        if (c) c.zoom(1);
+        setZoomStatus();
         return;
       }
-      case 'zoom-fit': {
-        const c = activeService('canvas');
-        if (c) c.zoom('fit-viewport', 'auto');
-        if (editorMode !== 'dmn') setZoomStatus();
-        return;
-      }
+      case 'zoom-fit': return zoomFit();
       case 'toggle-minimap': return toggleMinimap();
       case 'toggle-lint': return toggleLintPanel();
       case 'toggle-properties': return togglePropertiesPanel();
