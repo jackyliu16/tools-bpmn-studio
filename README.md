@@ -279,6 +279,22 @@ Electron 集成方式：预加载脚本注入 `window.bpmnStudio`，渲染进程
 | vite | 8 | 构建（dev / build / preview） |
 | electron / electron-builder | 29.4.6 / 26 | 桌面壳与打包 |
 
+### 依赖升级政策（重要）
+
+- **bpmn-io 系运行时依赖精确锁定**（package.json 无 `^`）：`bpmn-js`、`dmn-js`、
+  `bpmn-js-properties-panel`、`@bpmn-io/properties-panel`、`bpmnlint` 全家、
+  `diagram-js-minimap`、`min-dash`、`camunda-bpmn-moddle`、`zeebe-bpmn-moddle` 等。
+  原因：运行时耦合深（见下），`npm update` 一次可能静默破坏行为。
+- **升级这些包必须跑完整验证**：`npm run lint:js` + `npm run test:smoke` +
+  `npm run test:ui`，且先跑 `scripts/verify/check-backref-fix.mjs`（重建
+  `FlowNode.incoming/outgoing` 反引用与 lint 连通性规则的自检）。
+- **Dirty 跟踪依赖 diagram-js 内部字段**：`main.js` 的 `onBpmnStackChanged` 通过
+  `commandStack._stackIdx` 判定未保存修改，属 diagram-js 内部 API（该处有复核注释）。
+  diagram-js 大版本升级后必须重新验证「编辑 → 脏标记 → 撤销回保存点 → 星号消失」链路。
+- **执行平台 moddle 互斥**：`camunda-bpmn-moddle` 与 `zeebe-bpmn-moddle` 不能同时
+  注册进同一 modeler（moddle 不允许跨命名空间覆写 `TemplateSupported#modelerTemplate`），
+  升级任一需重验三种平台（纯 BPMN / Camunda 7 / Camunda 8）的打开与属性面板。
+
 ---
 
 ## 8. 后续扩展 (Roadmap)
