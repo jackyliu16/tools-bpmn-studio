@@ -297,6 +297,17 @@ Electron 集成方式：预加载脚本注入 `window.bpmnStudio`，渲染进程
 
 ---
 
+### 本地产物清理（维护）
+
+`release/`（Electron 安装包）与 `dist/`（Web 产物）均为 gitignored 的本地构建输出，
+多次打包后会积累占用磁盘（release/ 可达 GB 级）。需要时直接删除即可：
+
+```sh
+rm -rf release/ dist/
+```
+
+---
+
 ## 8. 后续扩展 (Roadmap)
 
 - [x] 集成 **dmn-js** 作为决策建模模块（v0.1.4）
