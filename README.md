@@ -59,7 +59,7 @@ This project was designed after evaluating the four bpmn-related repositories ch
 - Literal Expression（文字表达式）：FEEL 表达式编辑
 - 视图切换：顶部工具栏 DRD / 决策表 / 文字表达式 一键切换
 - 自动识别：打开 `.dmn` 文件自动切换到 DMN 编辑器
-- 新建：菜单「新建 DMN 图」(`Ctrl+Shift+N`) 或打开 `.dmn` 文件自动进入
+- 新建：工具栏「新建 DMN」按钮、菜单「新建 DMN 图」(`Ctrl+Shift+N`)，或打开 `.dmn` 文件自动进入
 
 **文件**
 - 新建 / 打开（原生对话框 or 浏览器文件选择）/ 拖放导入

@@ -2186,6 +2186,7 @@ function openSearch() {
 // --- toolbar wiring ------------------------------------------------------------------------
 $('#panel-collapse-btn').addEventListener('click', togglePropertiesPanel);
 $('#btn-new').addEventListener('click', createNewDiagram);
+$('#btn-new-dmn').addEventListener('click', createNewDmnDiagram);
 $('#btn-open').addEventListener('click', openFile);
 $('#btn-save').addEventListener('click', () => saveFile(false));
 $('#btn-export-svg').addEventListener('click', exportSVG);
@@ -2598,7 +2599,8 @@ document.addEventListener('keydown', (e) => {
   if (!mod) return;
 
   const k = e.key.toLowerCase();
-  if (k === 'n') { e.preventDefault(); createNewDiagram(); }
+  if (k === 'n' && e.shiftKey) { e.preventDefault(); createNewDmnDiagram(); }
+  else if (k === 'n') { e.preventDefault(); createNewDiagram(); }
   else if (k === 'o') { e.preventDefault(); openFile(); }
   else if (k === 's') {
     e.preventDefault();
