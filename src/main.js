@@ -805,6 +805,8 @@ async function setDmnDiagram(xml, name, filePath) {
     preErr.failedXml = xml;
     throw preErr;
   }
+  // 快照必须先于导入：失败导入会清空画布，无快照则用户只看得到空白编辑区
+  const previousXml = await snapshotCurrentXml();
   let warnings;
   try {
     ({ warnings } = await dmnModeler.importXML(xml));
@@ -812,6 +814,10 @@ async function setDmnDiagram(xml, name, filePath) {
     err.warnings = err.warnings || [];
     err.parseLocation = extractParseLocation(err);
     err.failedXml = xml;
+    // 镜像 setBpmnDiagram 失败路径：恢复上一可用模型后精确重算脏标记
+    // （restorePreviousModel/rebaseDirtyAfterRestore 均 modeler 通用，走 saveXML/importXML）
+    await restorePreviousModel(dmnModeler, previousXml);
+    await rebaseDirtyAfterRestore();
     throw err;
   }
 
@@ -851,8 +857,8 @@ async function snapshotCurrentXml() {
 /**
  * 导入失败时恢复上一个可用模型。
  *
- * bpmn-js/DMN-js 在图形导入前会 clear() 画布并替换 definitions，失败后旧图已丢失：
- * 画布空白、属性面板可能因根对象不完整而崩溃。这里用导入前的快照重建，
+ * bpmn-js / dmn-js 在图形导入前会 clear() 画布并替换 definitions，失败后旧图已丢失：
+ * 画布空白、属性面板可能因根对象不完整而崩溃。这里用导入前的快照重建（两编辑器通用），
  * 让用户关闭错误卡后看到的是自己之前的图，而不是空白画布。
  */
 async function restorePreviousModel(modeler, previousXml) {
