@@ -2,7 +2,7 @@
 
 > **Date:** 2026-09-05 · **Version audited:** `0.1.9` (commit `HEAD`) · **Method:** Static source review + cross-validation (5 independent reports, all findings verified against source)
 >
-> **Status (2026-09-05):** Sprint 1（H1–H5）已於 v0.1.10 修復完毕（见 AUDIT-BACKLOG.md「验证状态」节）；
+> **Status (2026-09-05):** Sprint 1（H1–H5）已於 v0.1.10 修復完毕；Sprint 2（M1–M15 及 L 级安全/卫生项，另根治既有 undo 服务缺失 bug）已於 v0.1.11 修復完毕（见 AUDIT-BACKLOG.md「验证状态」节）；
 > 其余发现连同修复要领已转移至 **`AUDIT-BACKLOG.md`** 持续追踪。
 > 复核对源码后的修正：H3 严重度应降为 low（实际代码无未定义变量 bug，仅 businessObject 未守门）；
 > M4 的 `precheckDmnXml` 已存在，修复仅需 1 行模式分派；M1 根因为 dmn-js 全库无 `saveSVG` 实现。
