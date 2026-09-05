@@ -32,3 +32,4 @@ Thumbs.db
 
 # pi 工作区元数据（本地会话记忆，不随仓库分发）
 .pi/
+.web-asset

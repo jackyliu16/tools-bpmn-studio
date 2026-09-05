@@ -65,6 +65,17 @@ jobs:
           fi
           echo "OK: tag=$TAG version=$PKG_VER"
 
+      # ── 缓存 electron / electron-builder 工具链（M15：必须在 npm ci 之前恢复，
+      # 否则 npm postinstall 下载 electron 时缓存尚未就位，永不命中）─────
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-
+
       # ── 安装依赖 ──────────────────────────────────────────────────
       - name: Install dependencies
         run: npm ci
@@ -80,14 +91,6 @@ jobs:
       # ── 渲染冒烟测试（纯 BPMN / Camunda 7 / Camunda 8 / DMN，44 项）
       - name: Smoke test
         run: npm run test:smoke
-
-      # ── 缓存 electron / electron-builder 工具链（每次约 150MB）─────
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/electron
-            ~/.cache/electron-builder
-          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       # ── Electron 打包：Linux（AppImage, deb, tar.gz）──────────────
       # --publish never：不在 electron-builder 内发布，统一由 release job
@@ -130,20 +133,33 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Verify version matches tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          PKG_VER="$(node -p "require('./package.json').version")"
+          if [[ "$TAG" != "v$PKG_VER" ]]; then
+            echo "::error::tag '$TAG' 与 package.json version '$PKG_VER' 不一致；请先在 package.json 中提升版本号再打 tag"
+            exit 1
+          fi
+          echo "OK: tag=$TAG version=$PKG_VER"
+        shell: bash
 
-      # Windows 侧同样需要 dist/（vite build 前先 lint:pack）
-      - name: Build web bundle
-        run: npm run build
-
-      # ── 缓存 electron / electron-builder 工具链（Windows 路径）─────
+      # ── 缓存 electron / electron-builder 工具链（M15：npm ci 之前恢复）─────
       - uses: actions/cache@v4
         with:
           path: |
             ~\AppData\Local\electron\Cache
             ~\AppData\Local\electron-builder\Cache
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Windows 侧同样需要 dist/（vite build 前先 lint:pack）
+      - name: Build web bundle
+        run: npm run build
 
       # ── Electron 打包：Windows（nsis, zip）────────────────────────
       - name: Package Electron — Windows
