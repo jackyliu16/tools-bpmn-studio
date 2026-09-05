@@ -678,6 +678,7 @@ function bindDmnModelerEvents(modeler) {
     viewer.on('commandStack.changed', () => {
       // 近似脏跟踪：任一视图有命令变更即置脏，保存时清零。
       // DMN 无跨视图统一命令栈，撤销回保存点不会自动清除星号（BPMN 侧是精确的）。
+      // 基线在 setDmnDiagram 导入时播种，null 守卫仅作启动期安全网（v0.1.10）
       if (lastSavedXML !== null) setDirty(true);
       if (xmlVisible) debouncedXmlRefresh();
     });
@@ -823,7 +824,8 @@ async function setDmnDiagram(xml, name, filePath) {
 
   currentFileName = name || 'untitled.dmn';
   currentFilePath = filePath || null;
-  lastSavedXML = null;
+  // 基线 = 刚导入的内容（v0.1.10 静默丢失修复）：打开/新建后的编辑由此正确置脏
+  lastSavedXML = xml;
   lastSavedAt = null;
   isDirty = false;
 
@@ -964,7 +966,8 @@ async function setBpmnDiagram(xml, name, filePath) {
 
   currentFileName = name || 'untitled.bpmn';
   currentFilePath = filePath || null;
-  lastSavedXML = null;
+  // 基线 = 刚导入的内容（v0.1.10 静默丢失修复）：打开/新建后的编辑由此正确置脏
+  lastSavedXML = xml;
   lastSavedAt = null;
   isDirty = false;
 
@@ -977,7 +980,14 @@ async function setBpmnDiagram(xml, name, filePath) {
   if (xmlVisible) refreshXmlView();
 }
 
+/** 有未保存变更时先确认是否放弃；返回 false 表示用户取消当前操作（v0.1.10 数据丢失修复） */
+function confirmDiscardUnsaved() {
+  if (!isDirty) return true;
+  return window.confirm('当前图表有未保存的变更，确定放弃并继续吗？');
+}
+
 async function createNewDiagram() {
+  if (!confirmDiscardUnsaved()) return;
   stopSimulationIfNeeded();
   try {
     await setDiagram(initialDiagramXML, 'untitled.bpmn', null);
@@ -996,6 +1006,7 @@ async function createNewDiagram() {
 }
 
 async function createNewDmnDiagram() {
+  if (!confirmDiscardUnsaved()) return;
   stopSimulationIfNeeded();
   try {
     switchToDmnMode();
@@ -1015,6 +1026,7 @@ async function createNewDmnDiagram() {
 }
 
 async function openDiagramContent(xml, name, filePath) {
+  if (!confirmDiscardUnsaved()) return;
   stopSimulationIfNeeded();
   try {
     await setDiagram(xml, name, filePath);
@@ -1207,7 +1219,8 @@ function currentStackIdx() {
 }
 
 function onBpmnStackChanged() {
-  // 从未保存过：无「脏」语义（新建文件编辑不显示星号，与既有行为一致）
+  // 基线在导入/保存时播种（见 setBpmnDiagram / markSaved）；
+  // null 仅存在于首次导入前（启动窗口期），保留作安全网
   if (lastSavedXML === null) return;
   // 存档基准已失效（刚导入重建过命令栈）→ 只要有任何改动就算脏
   if (savedStackIdx === null) { setDirty(true); return; }
@@ -1227,6 +1240,9 @@ function markSaved(xml) {
  * 失败导入会把命令栈 clear（触发 commandStack.changed），恢复导入同样清栈，
  * 两者都会让索引方案误判为脏；这里在恢复完成后做一次性的序列化比较（仅失败路径，
  * 开销可忽略），然后作废存档游标（此后编辑一律置脏，直至下次保存）。
+ *
+ * 已知保守边界：导入的文件从未保存过时，基线是文件原文、与序列化输出存在格式差异，
+ * 恢复后可能「多显示 ★」——方向保守（宁多警告不漏警告）。
  */
 async function rebaseDirtyAfterRestore() {
   if (lastSavedXML === null) return;
@@ -1905,8 +1921,9 @@ function bindModelerEvents(modeler) {
   });
 
   modeler.on('selection.changed', (event) => {
-    const element = event.newSelection && event.newSelection[0];
-    if (element) {
+    const element = event.newSelection?.[0];
+    // 瞬态元素（拖拽幽灵、外部标签占位）可能没有 businessObject，守门后再取 $type
+    if (element?.businessObject?.$type) {
       els.statusRight.textContent = `${element.id} (${element.businessObject.$type.replace('bpmn:', '')})`;
     } else {
       els.statusRight.textContent = '';
@@ -2620,6 +2637,16 @@ document.addEventListener('keydown', (e) => {
     if (u) u.redo();
   }
 });
+
+// --- 关窗守护（浏览器端）：Electron 由主进程 close 拦截接管，此处只负责纯浏览器构建 -------
+if (!studio) {
+  window.addEventListener('beforeunload', (e) => {
+    if (isDirty) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+}
 
 // --- 全局兜底：未捕获的异步错误/运行时异常也走统一错误卡（避免静默白屏） ----------
 // 仅当错误未经 showError 呈现时弹出（lastError 由 showError/hideError 维护）。
