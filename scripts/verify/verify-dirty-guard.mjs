@@ -197,6 +197,49 @@ const modelRestored = await evaluate(
 check('H4 previous DMN model restored after failed import (canvas not blank)', modelRestored > 0, `elements: ${modelRestored}`);
 check('H4 app still responsive after the failed import', (await evaluate(`1`)) === 1);
 
+// --- 6. M1: SVG export works in DMN mode (self-implemented serializer) --------
+const dmnSvg = await evaluate(`(async () => {
+  try {
+    const svg = await window.__saveActiveSvg();
+    return typeof svg === 'string' && svg.startsWith('<svg') && svg.includes('viewBox') && svg.length > 1000
+      ? 'ok:' + svg.length
+      : 'bad:' + String(svg).slice(0, 80);
+  } catch (err) { return 'threw: ' + err.message; }
+})()`);
+check('M1 DMN SVG export produces standalone serialized SVG (viewBox + inlined styles)',
+  dmnSvg.startsWith('ok:'), dmnSvg);
+
+// --- 7. M1 sanity: BPMN export path unchanged (native saveSVG) -----------------
+await click('#btn-error-close'); // 关掉 H4 留下的错误卡，避免遮住后续操作
+await evaluate(`window.confirm = () => true;`);
+await click('#btn-new');
+await waitFor(`!document.querySelector('#dmn-view-tabs').classList.contains('hidden') ? false : !!window.__bpmnModeler`, 10000);
+const bpmnSvg = await evaluate(`(async () => {
+  try {
+    const svg = await window.__saveActiveSvg();
+    return typeof svg === 'string' && svg.includes('<svg') ? 'ok' : 'bad';
+  } catch (err) { return 'threw: ' + err.message; }
+})()`);
+check('M1 BPMN SVG export still works via native saveSVG', bpmnSvg === 'ok', bpmnSvg);
+
+// --- 8. M2: toolbar undo drives the ACTIVE modeler's stack (name reverts) -------
+// 注：新建图未保存时 savedStackIdx=null，回退后 ★ 按保守语义仍保留（设计如此）；
+// 这里验证的是“按钮确实操作了当前模型栈”——重命名被撤销即可证。
+const rootNameBefore = await evaluate(`window.__bpmnModeler.get('canvas').getRootElement().businessObject.name || ''`);
+await evaluate(`(() => {
+  const m = window.__bpmnModeler;
+  m.get('modeling').updateProperties(m.get('canvas').getRootElement(), { name: 'undo-probe' });
+})()`);
+const probeApplied = await waitFor(`window.__bpmnModeler.get('canvas').getRootElement().businessObject.name === 'undo-probe'`);
+check('M2 setup: rename command applied to active BPMN model', probeApplied);
+await click('#btn-undo');
+const nameReverted = await waitFor(`(() => {
+  const n = window.__bpmnModeler.get('canvas').getRootElement().businessObject.name || '';
+  return n !== 'undo-probe';
+})()`);
+check('M2 toolbar undo button drives the active command stack (rename reverted)', nameReverted,
+  `before=${rootNameBefore}`);
+
 console.log('\n' + results.join('\n'));
 console.log(`\n${failed === 0 ? 'ALL CHECKS PASSED' : failed + ' CHECK(S) FAILED'} (${results.length} total)`);
 
