@@ -833,7 +833,7 @@ async function setDmnDiagram(xml, name, filePath) {
   // 基线 = 刚导入的内容（v0.1.10 静默丢失修复）：打开/新建后的编辑由此正确置脏
   lastSavedXML = xml;
   lastSavedAt = null;
-  isDirty = false;
+  setDirty(false); // 同 setBpmnDiagram：走 setDirty 同步 ★ 可见性与主进程脏状态
 
   updateTitle();
 
@@ -975,9 +975,9 @@ async function setBpmnDiagram(xml, name, filePath) {
   // 基线 = 刚导入的内容（v0.1.10 静默丢失修复）：打开/新建后的编辑由此正确置脏
   lastSavedXML = xml;
   lastSavedAt = null;
-  isDirty = false;
-
-  updateTitle();
+  // 必须走 setDirty 而非裸赋值：同步 ★ 可见性与主进程脏状态（裸赋值会残留旧图的 ★，
+  // v0.1.10 验证脚本抓出）；其内部的 updateTitle 已刷新标题
+  setDirty(false);
 
   modeler.get('canvas').zoom('fit-viewport', 'auto');
   if (modeler.get('minimap')) modeler.get('minimap').open();
