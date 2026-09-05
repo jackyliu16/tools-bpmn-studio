@@ -95,7 +95,7 @@ win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 - `app.enableSandbox()`（`app.whenReady()` 前）。注意驗證既有 IPC 不受影響。
 
 ### L3 / L10 / L12 / L14 / L15 / L5 / L6 / L7 / L8 / L9（小項清單）
-- [ ] L3 視圖選單 checkbox 狀態永不回同步（需 IPC 回環或移除 checkbox 型態）
+- [x] L3 視圖選單 checkbox 狀態永不回同步 → 已修（v0.1.11 提前收編）：渲染進程為真相源，面板可見性變化時經 `view:set-checks` IPC 推平，主進程僅在布爾值變化時重建菜單；順手修正 lint 面板初始態三重謊言（`lintVisible=true`/按鈕 active/面板實際 hidden → 首击無效），選單初始 lint=false 對齊實際。驗證注意：原生選單渲染不可 CDP 自動化，但橋接存在性與交互零退化已進 21 項檢查；勾選視覺回同步需人工瞥一眼（切換屬性面板/校驗面板後看選單）。
 - [x] L10 匯出對話框 PNG/SVG 混在同一 `filters[]` 條目 → 拆分（v0.1.11）
 - [x] L12 另存 `.xml` 副檔名未納入正則 → 已加 `|xml`（v0.1.11，匯出 baseName 兩處）
 - [x] L14 macOS 提示文案硬編碼 "Ctrl" → 啟動時依 `studio.platform` 換 ⌘（v0.1.11）
@@ -125,7 +125,30 @@ win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 | 版本 | 範圍 | 狀態 |
 |---|---|---|
 | v0.1.10 | Sprint 1（H1–H5）+ setDirty 可見性修復 + 回歸腳本 | ✅ 已完成（未推 tag 發版） |
-| v0.1.11 | Sprint 2 全部（M1–M15、L1/L4/L7–L14/L16/L18–L20）+ undo 服務既有 bug 根治 | ✅ 已完成（未推 tag 發版） |
-| v0.2.0 | ActiveEditorContext 重構（收編 L3/L5/L6）+ 模型生命週期狀態機 | 待重構規劃 |
+| v0.1.11 | Sprint 2 全部（M1–M15、L1/L3/L4/L7–L14/L16/L18–L20）+ undo 服務既有 bug 根治 + lint 面板初始態修正 | ✅ 已完成（未推 tag 發版） |
+| v0.2.0 | ActiveEditorContext 重構（收編 L5/L6）+ 模型生命週期狀態機 | 待重構規劃 |
+
+---
+
+## 剩餘未解決問題總覽（2026-09-05 Sprint 2 收尾盤點）
+
+> 代碼級審計發現至此已消納 **34/39**（H1–H5、M1–M15、L1–L4、L7–L14、L16、L18–L20）。
+
+### A. 待重構項（v0.2.0，非缺陷，是結構債）
+- **L5/L6** — DMN 視圖切換/標簽邊界 case，依賴 ActiveEditorContext 抽象（根因備註 §1）
+- **架構備註 §1–§3** — ActiveEditorContext / 模型生命週期狀態機 / `_stackIdx` 升級複核（已有註釋錨點）
+
+### B. 不可恢復項（需重跑審計覆蓋，勿憑推測補寫）
+- **L11 / L17** — 審計去重階段被合併的 2 項 low 級發現，原始細節已不可考 → 重跑 `codebase-audit` maintainability/security 維度即可覆蓋
+
+### C. 人工驗證清單（原生 UI 無法 CDP 自動化，發版前應過一遍）
+1. 三按鈕關窗對話框點擊流（取消/保存並關閉/放棄變更）
+2. 「保存並關閉」時另存對話框點取消 → 窗口須保持打開
+3. 純瀏覽器構建刷新/關頁觸發 beforeunload 提示
+4. 切換屬性面板/校驗面板/小地圖後，視圖選單勾選標記須跟隨真實狀態（L3，本次新增）
+5. 新建圖首次點「✔ 校驗」按鈕 → 面板應立即展開（初始態修正後，本次新增）
+
+### D. 發布動作（非代碼問題，待人工觸發）
+- `git push && git tag v0.1.11 && git push --tags`（tag 必須等於 v+package.json 版本；v0.1.10 從未發過，v0.1.10 與 v0.1.11 內容已在 master 線性疊加，可直接發 v0.1.11）
 
 > 提醒（release 管線規則）：發版前先將 `package.json` 升版並提交，tag 必須等於 `v` + 版本號再推送。
