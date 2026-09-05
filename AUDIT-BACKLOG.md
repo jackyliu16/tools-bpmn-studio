@@ -100,7 +100,7 @@ win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 - [x] L12 另存 `.xml` 副檔名未納入正則 → 已加 `|xml`（v0.1.11，匯出 baseName 兩處）
 - [x] L14 macOS 提示文案硬編碼 "Ctrl" → 啟動時依 `studio.platform` 換 ⌘（v0.1.11）
 - [x] L15 瀏覽器端縮放重置無入口 → 已補 `Ctrl+0`（隨 M13；工具欄按鈕未加，如需再補）
-- [ ] L5/L6 DMN 視圖切換/標簽邊界（隨 ActiveEditorContext 重構一併收編）
+- [x] L5/L6 DMN 視圖切換/標簽邊界 → 主體已修（v0.1.11）：原審計明細同被去重吞掉，但代碼勘察+CDP 實測復原出實錘 bug 鏈——舊代碼監聽了 dmn-js 17 根本不存在的 `view.switch` 事件（實際是 `views.changed`），導致 ①tab 高亮永不跟隨真實視圖 ②`currentDmnView` 恒為 drd（元數據框/XML 導出註釋永報錯視圖）③點模型不存在的視圖 tab 完全静默。已改接 `views.changed` 同步高亮+視圖不存在時 tab 置灰+狀態欄提示；`.tool:disabled` 樣式配套。回歸：verify-zoom-dmn 新增 3 項斷言（17/17）。**僅剩邊界：多決策表/多文字表達式視圖只達首個（`find(v=>v.type===…)` 取第一个），需 per-view 動態 tab，留 v0.2.0**。
 - [x] L7 啟動 IIFE 內 `createNewDiagram()` 未 await（v0.1.11）
 - [x] L8 `describeFsError` 缺 `EEXIST/EMFILE/ENFILE/ENAMETOOLONG` 映射（v0.1.11）
 - [x] L9 `unhandledrejection` 回調內 `showError` 無 try/catch（v0.1.11）
@@ -125,18 +125,18 @@ win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 | 版本 | 範圍 | 狀態 |
 |---|---|---|
 | v0.1.10 | Sprint 1（H1–H5）+ setDirty 可見性修復 + 回歸腳本 | ✅ 已完成（未推 tag 發版） |
-| v0.1.11 | Sprint 2 全部（M1–M15、L1/L3/L4/L7–L14/L16/L18–L20）+ undo 服務既有 bug 根治 + lint 面板初始態修正 | ✅ 已完成（未推 tag 發版） |
-| v0.2.0 | ActiveEditorContext 重構（收編 L5/L6）+ 模型生命週期狀態機 | 待重構規劃 |
+| v0.1.11 | Sprint 2 全部（M1–M15、L1/L3/L4/L7–L14/L16/L18–L20）+ L5/L6 主體 + undo 服務既有 bug 根治 + lint 面板初始態修正 | ✅ 已完成（未推 tag 發版） |
+| v0.2.0 | ActiveEditorContext 重構（收編多視圖動態 tab）+ 模型生命週期狀態機 | 待重構規劃 |
 
 ---
 
 ## 剩餘未解決問題總覽（2026-09-05 Sprint 2 收尾盤點）
 
-> 代碼級審計發現至此已消納 **34/39**（H1–H5、M1–M15、L1–L4、L7–L14、L16、L18–L20）。
+> 代碼級審計發現至此已消納 **36/39**（H1–H5、M1–M15、L1–L4、L7–L14、L16、L18–L20，另 L5/L6 主體）。
 
 ### A. 待重構項（v0.2.0，非缺陷，是結構債）
-- **L5/L6** — DMN 視圖切換/標簽邊界 case，依賴 ActiveEditorContext 抽象（根因備註 §1）
-- **架構備註 §1–§3** — ActiveEditorContext / 模型生命週期狀態機 / `_stackIdx` 升級複核（已有註釋錨點）
+- **多決策表/多文字表達式視圖不可達** — 固定三個 tab 只能到同類型首個視圖（`switchDmnView` 的 `find` 取首个），需 per-view 動態生成 tab，隨 ActiveEditorContext 重構一起做
+- **架構備註 §1–§3** — ActiveEditorContext / 模型生命週期狀態機 / `_stackIdx` 升級複核（已有註釋錨點）。（L5/L6 主體已於 v0.1.11 實修：死事件監聽 `view.switch`→`views.changed`、tab 高亮跟隨、缺視圖置灰+提示；見上條）
 
 ### B. 不可恢復項（需重跑審計覆蓋，勿憑推測補寫）
 - **L11 / L17** — 審計去重階段被合併的 2 項 low 級發現，原始細節已不可考 → 重跑 `codebase-audit` maintainability/security 維度即可覆蓋
