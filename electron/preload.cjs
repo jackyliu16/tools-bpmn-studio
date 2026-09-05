@@ -35,6 +35,9 @@ contextBridge.exposeInMainWorld('bpmnStudio', {
   /** push dirty state to main for the unsaved-changes close guard (v0.1.10) */
   setDirtyState: (dirty) => ipcRenderer.send('window:dirty-state', !!dirty),
 
+  /** push real view-panel visibility so the native menu checkboxes stay truthful (L3) */
+  setViewChecks: (checks) => ipcRenderer.send('view:set-checks', checks),
+
   /** main intercepted a close while dirty and asks the renderer to save first */
   onSaveBeforeClose: (callback) => {
     ipcRenderer.on('window:save-then-close', () => callback());

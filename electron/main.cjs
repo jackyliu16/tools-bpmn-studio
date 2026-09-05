@@ -127,6 +127,10 @@ function sendToFocused(action) {
   if (win) win.webContents.send('menu:action', action);
 }
 
+// 视图复选框真实状态（L3）：渲染进程是唯一真相源（工具栏/快捷键/收纳轨道都能改），
+// 菜单项初始 checked 只是占位；启动后由渲染进程 pushViewChecks 推平并经重建菜单回同步。
+const viewChecks = { minimap: true, lint: false, properties: true };
+
 function buildMenu() {
   const template = [
     {
@@ -169,19 +173,19 @@ function buildMenu() {
         {
           label: '小地图',
           type: 'checkbox',
-          checked: true,
+          checked: viewChecks.minimap,
           click: () => sendToFocused('toggle-minimap')
         },
         {
           label: '模型校验面板',
           type: 'checkbox',
-          checked: true,
+          checked: viewChecks.lint,
           click: () => sendToFocused('toggle-lint')
         },
         {
           label: '属性面板（右侧）',
           type: 'checkbox',
-          checked: true,
+          checked: viewChecks.properties,
           click: () => sendToFocused('toggle-properties')
         },
         { type: 'separator' },
@@ -318,6 +322,19 @@ ipcMain.handle('app:versions', () => {
 });
 
 // --- IPC: file metadata (stat) --------------------------------------------------
+ipcMain.on('view:set-checks', (_event, checks) => {
+  // 渲染进程推送视图面板真实勾选态 → 仅变化时重建菜单（L3），避免无谓的菜单闪烁
+  if (!checks || typeof checks !== 'object') return;
+  let changed = false;
+  for (const key of ['minimap', 'lint', 'properties']) {
+    if (typeof checks[key] === 'boolean' && checks[key] !== viewChecks[key]) {
+      viewChecks[key] = checks[key];
+      changed = true;
+    }
+  }
+  if (changed) buildMenu();
+});
+
 ipcMain.handle('file:stat', async (_event, filePath) => {
   // 不在对话框信任集内的路径一律拒答（M11），行为与文件不存在一致
   if (typeof filePath !== 'string' || !statAllowedPaths.has(filePath)) return null;

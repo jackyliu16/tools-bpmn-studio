@@ -119,10 +119,10 @@ const booted = await waitFor(`!!(document.querySelector('#js-canvas svg') && win
 check('app booted (canvas rendered, debug globals exposed)', booted);
 
 // --- 0. close-guard preload bridge (H1 contract surface) ----------------------
-const bridge = await evaluate(`['setDirtyState','onSaveBeforeClose','allowWindowClose']
+const bridge = await evaluate(`['setDirtyState','onSaveBeforeClose','allowWindowClose','setViewChecks']
   .map(k => typeof (window.bpmnStudio || {})[k]).join(',')`);
-check('preload close-guard bridge exposed (setDirtyState/onSaveBeforeClose/allowWindowClose)',
-  bridge === 'function,function,function', bridge);
+check('preload close-guard/view-checks bridge exposed (setDirtyState/onSaveBeforeClose/allowWindowClose/setViewChecks)',
+  bridge === 'function,function,function,function', bridge);
 
 // --- 1. H2: fresh boot is clean ----------------------------------------------
 check('boot: ★ hidden (clean baseline)', !(await dirtyVisible()));

@@ -253,7 +253,7 @@ let currentFilePath = null;
 let lastSavedXML = null;
 let lastSavedAt = null;
 let isDirty = false;
-let lintVisible = true;
+let lintVisible = false; // 初始与 #lint-panel.hidden 一致（旧值 true 会让首击无效——面板本就隐藏）
 let simulateMode = false;
 let xmlVisible = false;
 let xmlEditing = false;
@@ -601,6 +601,7 @@ function destroyModeler() {
   lintVisible = false;
   els.lintPanel.classList.add('hidden');
   $('#btn-lint').classList.remove('active');
+  pushViewChecks();
   simulateMode = false;
   $('#btn-simulate').textContent = '▶ 模拟';
   $('#btn-simulate').classList.remove('active');
@@ -1051,6 +1052,7 @@ async function setBpmnDiagram(xml, name, filePath) {
   modeler.get('canvas').zoom('fit-viewport', 'auto');
   if (modeler.get('minimap')) modeler.get('minimap').open();
   $('#btn-minimap').classList.toggle('active', !!(modeler.get('minimap') && modeler.get('minimap').isOpen()));
+  pushViewChecks();
 
   if (xmlVisible) refreshXmlView();
 }
@@ -2244,6 +2246,7 @@ function toggleLintPanel() {
   lintVisible = !lintVisible;
   els.lintPanel.classList.toggle('hidden', !lintVisible);
   $('#btn-lint').classList.toggle('active', lintVisible);
+  pushViewChecks();
 }
 
 // --- token simulation ---------------------------------------------------------------
@@ -2277,6 +2280,20 @@ function toggleMinimap() {
   const minimap = bpmnModeler.get('minimap');
   minimap.toggle();
   $('#btn-minimap').classList.toggle('active', minimap.isOpen());
+  pushViewChecks();
+}
+
+// 视图面板真实勾选态推给主进程菜单（L3）：工具栏/快捷键/收纳轨道都能改可见性，
+// 只有渲染进程知道真相；菜单 checkbox 仅作为镜像显示。
+function pushViewChecks() {
+  if (!studio || typeof studio.setViewChecks !== 'function') return;
+  try {
+    studio.setViewChecks({
+      minimap: !!(bpmnModeler && bpmnModeler.get('minimap') && bpmnModeler.get('minimap').isOpen()),
+      lint: !els.lintPanel.classList.contains('hidden'),
+      properties: !els.panelRegion.classList.contains('collapsed')
+    });
+  } catch { /* 菜单同步属非关键路径，不得影响交互本身 */ }
 }
 
 // --- properties panel collapse (right pane) ----------------------------------------------
@@ -2288,6 +2305,7 @@ function setPropertiesPanelCollapsed(collapsed) {
   els.panelCollapseBtn.textContent = collapsed ? '«' : '»';
   els.panelCollapseBtn.title = collapsed ? '展开属性面板' : '收起属性面板';
   els.panelCollapseBtn.setAttribute('aria-label', els.panelCollapseBtn.title);
+  pushViewChecks();
 }
 
 // Persist through the Electron main-process store when available: localStorage
@@ -2844,6 +2862,7 @@ window.addEventListener('error', (event) => {
   } catch { /* never let boot fail on theme */ }
   // 启动首图必须 await（L7）：否则后续同步代码可能在未完成的导入上继续跑
   await createNewDiagram();
+  pushViewChecks(); // 菜单 checkbox 初始态对齐（L3：属性面板折叠态可能来自持久化偏好）
   // macOS 下工具栏提示用 ⌘ 与菜单加速器观感一致（L14）；提示文案在 index.html 中硬编码 Ctrl
   if (studio && studio.platform === 'darwin') {
     for (const el of document.querySelectorAll('[title*="Ctrl+"]')) {
