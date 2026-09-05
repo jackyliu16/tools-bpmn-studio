@@ -87,6 +87,10 @@ function createWindow() {
     win.maximize();
   }
 
+  // 导航守卫（M10）：应用内容完全本地，任何偏离本页的导航/开窗都是非预期行为
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
   // 未保存变更关窗守护（v0.1.10）：渲染进程通过 window:dirty-state 推送脏标记；
   // 脏且未放行时拦截关闭，弹三选框（取消/保存并关闭/放弃变更）。
   win.on('close', (e) => {
@@ -217,6 +221,10 @@ function buildMenu() {
 }
 
 // --- IPC: file dialogs ------------------------------------------------------
+// file:stat 只允许查询本会话中通过对话框打开/保存过的路径（M11）：
+// 任意路径 stat 会泄露存在性/大小/修改时间。对话框结果由系统产生，作为唯一信任源。
+const statAllowedPaths = new Set();
+
 ipcMain.handle('dialog:open-diagram', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(win, {
@@ -233,6 +241,7 @@ ipcMain.handle('dialog:open-diagram', async (event) => {
   if (result.canceled || !result.filePaths.length) return null;
 
   const filePath = result.filePaths[0];
+  statAllowedPaths.add(filePath);
   try {
     const content = await fs.promises.readFile(filePath, 'utf-8');
     return { path: filePath, content };
@@ -260,6 +269,7 @@ ipcMain.handle('dialog:save-diagram', async (event, payload) => {
 
   try {
     await fs.promises.writeFile(result.filePath, content, 'utf-8');
+    statAllowedPaths.add(result.filePath);
     return { path: result.filePath };
   } catch (err) {
     return { error: { code: err.code || 'UNKNOWN', syscall: err.syscall, message: err.message } };
@@ -270,10 +280,16 @@ ipcMain.handle('dialog:export-file', async (event, payload) => {
   const { name, buffer, content } = payload || {};
   const win = BrowserWindow.fromWebContents(event.sender);
 
+  // 按实际导出类型分列过滤器（L10）：混列 png+svg 会让用户选中不匹配的扩展名
+  const isPng = /\.png$/i.test(name || '');
+  const filters = isPng
+    ? [{ name: 'PNG 图像', extensions: ['png'] }]
+    : [{ name: 'SVG 图像', extensions: ['svg'] }];
+
   const result = await dialog.showSaveDialog(win, {
     title: '导出文件',
     defaultPath: name || 'export.png',
-    filters: [{ name: '图像', extensions: ['png', 'svg'] }]
+    filters
   });
 
   if (result.canceled || !result.filePath) return null;
@@ -303,6 +319,8 @@ ipcMain.handle('app:versions', () => {
 
 // --- IPC: file metadata (stat) --------------------------------------------------
 ipcMain.handle('file:stat', async (_event, filePath) => {
+  // 不在对话框信任集内的路径一律拒答（M11），行为与文件不存在一致
+  if (typeof filePath !== 'string' || !statAllowedPaths.has(filePath)) return null;
   try {
     const st = await fs.promises.stat(filePath);
     return { size: st.size, mtimeMs: st.mtimeMs };
@@ -372,6 +390,8 @@ ipcMain.handle('prefs:set', (_event, key, value) => {
 });
 
 // --- app lifecycle ----------------------------------------------------------
+app.enableSandbox(); // 全局沙箱兜底（L18）：窗口级 sandbox:true 之外的纵深防御
+
 app.whenReady().then(() => {
   buildMenu();
   createWindow();
