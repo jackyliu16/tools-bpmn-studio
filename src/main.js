@@ -343,7 +343,12 @@ function updateThemeButton() {
 // Listen for system theme changes when in auto mode
 if (window.matchMedia) {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', async () => {
-    if (!(await loadStoredTheme())) applyTheme('auto');
+    try {
+      if (!(await loadStoredTheme())) applyTheme('auto');
+    } catch (err) {
+      // pref store 读取失败不得弄坏主题切换（L4）
+      console.warn('theme auto listener failed', err);
+    }
   });
 }
 
@@ -591,6 +596,11 @@ function destroyModeler() {
   }
   els.canvas.innerHTML = '';
   els.propertiesPanel.innerHTML = '';
+  // 切换/关闭图表时清掉 lint 面板残留（M14）：旧图的结果不得出现在新图/DMN 里
+  els.lintList.innerHTML = '';
+  lintVisible = false;
+  els.lintPanel.classList.add('hidden');
+  $('#btn-lint').classList.remove('active');
   simulateMode = false;
   $('#btn-simulate').textContent = '▶ 模拟';
   $('#btn-simulate').classList.remove('active');
@@ -713,6 +723,13 @@ function activeService(module) {
   }
 }
 
+// 撤销/重做统一入口：bpmn-js 并没有名为 'undo' 的 DI 服务（旧 get('undo') 永远抛
+// "No provider" 被吞掉，快捷键/按钮/菜单的撤销全部静默无效）。
+// diagram-js CommandStack 自带 undo()/redo()，才是唯一真相。
+function undoStack() {
+  return activeService('commandStack');
+}
+
 /** 导出当前模型的格式化 XML；无模型时返回 null */
 async function saveActiveXml() {
   const modeler = getActiveModeler();
@@ -721,13 +738,63 @@ async function saveActiveXml() {
   return xml;
 }
 
-/** 导出当前模型的 SVG；无模型时返回 null */
+/**
+ * DMN 查看器不提供 saveSVG（dmn-js 全库无该 API，M1）：从活跃视图的画布 SVG 层
+ * 序列化并内联文档样式，生成自包含 SVG。克隆后把视口 transform 重置为单位阵，
+ * 用 getBBox 的内容边界作 viewBox —— 导出自动适配图形范围，不受当前缩放/平移影响。
+ * 已知限制：@font-face 字体在导出文件中为相对路径（与 bpmn-js saveSVG 同级别限制）。
+ */
+function serializeDmnSvg() {
+  const canvas = dmnGet('canvas');
+  // DRD Canvas 的 getGraphics() 必须传 element（无参重载会直接 TypeError）：
+  // 用根元素的图形反查所在 <svg>；决策表/字面编辑器视图无画布图形 → 给明确提示
+  let svgEl = null;
+  if (canvas && canvas.getRootElement) {
+    try {
+      const gfx = canvas.getGraphics(canvas.getRootElement());
+      svgEl = gfx && gfx.ownerSVGElement ? gfx.ownerSVGElement : null;
+    } catch { /* 非图形视图 */ }
+  }
+  if (!svgEl) throw new Error('当前 DMN 视图没有可导出的图形（仅 DRD 图形视图支持 SVG 导出）');
+  // dmn-js DRD 的视口层 class 是 'viewport'（不是 diagram-js 的 'djs-viewport'）
+  const viewport = svgEl.querySelector('.viewport, .djs-viewport') || svgEl.firstElementChild;
+  let bbox = null;
+  try { bbox = viewport && viewport.getBBox ? viewport.getBBox() : null; } catch { /* 视图未就绪 */ }
+  if (!bbox || bbox.width < 1 || bbox.height < 1) throw new Error('DMN 当前视图内容为空，无法导出');
+
+  const clone = svgEl.cloneNode(true);
+  const cloneVp = clone.querySelector('.viewport, .djs-viewport') || clone.firstElementChild;
+  if (cloneVp) cloneVp.removeAttribute('transform');
+  const w = Math.ceil(bbox.width);
+  const h = Math.ceil(bbox.height);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+  clone.setAttribute('width', w);
+  clone.setAttribute('height', h);
+  clone.setAttribute('viewBox', `${Math.floor(bbox.x)} ${Math.floor(bbox.y)} ${w} ${h}`);
+
+  // 内联同文档样式表（含 dmn-js/diagram-js 样式）；跨源不可读的表跳过
+  let css = '';
+  for (const sheet of document.styleSheets) {
+    try {
+      for (const rule of sheet.cssRules) css += rule.cssText + '\n';
+    } catch { /* file:// 或跨源样式表无法枚举规则 */ }
+  }
+  const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+  style.textContent = css;
+  clone.insertBefore(style, clone.firstChild);
+  return new XMLSerializer().serializeToString(clone);
+}
+
+/** 导出当前模型的 SVG；无模型时返回 null（DMN 走自实现序列化，M1） */
 async function saveActiveSvg() {
   const modeler = getActiveModeler();
   if (!modeler) return null;
+  if (editorMode === 'dmn') return serializeDmnSvg();
   const { svg } = await modeler.saveSVG({ format: true });
   return svg;
 }
+if (debugGlobals) window.__saveActiveSvg = saveActiveSvg; // CDP 回归验证用
 
 function updateDmnViewTabs() {
   const views = {
@@ -867,6 +934,8 @@ async function restorePreviousModel(modeler, previousXml) {
     await modeler.importXML(previousXml);
   } catch (err) {
     console.warn('restore previous model failed', err);
+    // 静默失败会让用户误以为已还原（M9）：状态栏给可见提示，错误卡仍展示原始导入错误
+    setStatus('⚠ 恢复上一个可用模型失败，画布可能为空');
   }
 }
 
@@ -992,7 +1061,7 @@ function confirmDiscardUnsaved() {
   return window.confirm('当前图表有未保存的变更，确定放弃并继续吗？');
 }
 
-async function createNewDiagram() {
+async function createNewDiagramInner() {
   if (!confirmDiscardUnsaved()) return;
   stopSimulationIfNeeded();
   try {
@@ -1011,7 +1080,7 @@ async function createNewDiagram() {
   }
 }
 
-async function createNewDmnDiagram() {
+async function createNewDmnDiagramInner() {
   if (!confirmDiscardUnsaved()) return;
   stopSimulationIfNeeded();
   try {
@@ -1031,7 +1100,7 @@ async function createNewDmnDiagram() {
   }
 }
 
-async function openDiagramContent(xml, name, filePath) {
+async function openDiagramContentInner(xml, name, filePath) {
   if (!confirmDiscardUnsaved()) return;
   stopSimulationIfNeeded();
   try {
@@ -1050,10 +1119,39 @@ async function openDiagramContent(xml, name, filePath) {
   }
 }
 
+// —— M3 并发互斥：快捷键连打/拖放+菜单会让两次 import 在同一 modeler 上交错，
+// 后一次 clear 掉前一次的画布。所有会替换模型内容的入口必须过 guarded()。
+// 长期解是模型切换生命周期的状态机（见 AUDIT-BACKLOG.md 架构备注），这里是务实止血。
+let _modelBusy = false;
+async function guarded(fn) {
+  if (_modelBusy) {
+    setStatus('上一个操作仍在处理中，请稍候…');
+    return;
+  }
+  _modelBusy = true;
+  try {
+    await fn();
+  } finally {
+    _modelBusy = false;
+  }
+}
+
+function createNewDiagram() { return guarded(createNewDiagramInner); }
+function createNewDmnDiagram() { return guarded(createNewDmnDiagramInner); }
+function openDiagramContent(xml, name, filePath) { return guarded(() => openDiagramContentInner(xml, name, filePath)); }
+
 // --- file open / save ---------------------------------------------------------
 async function openFile() {
   if (studio) {
-    const result = await studio.openDiagram();
+    // 对话框/读文件异常也给带上下文的错误卡（M7），不留给全局兑底
+    let result;
+    try {
+      result = await studio.openDiagram();
+    } catch (err) {
+      console.error(err);
+      showError({ title: '读取文件失败', message: err.message || String(err), error: err });
+      return;
+    }
     if (!result) return;
     if (result.error) {
       showFsError(result);
@@ -1119,7 +1217,7 @@ async function exportSVG() {
   try {
     const svg = await saveActiveSvg();
     if (svg === null) return;
-    const baseName = currentFileName.replace(/\.(bpmn|dmn)$/i, '');
+    const baseName = currentFileName.replace(/\.(bpmn|dmn|xml)$/i, ''); // .xml 也算已知后缀（L12）
     if (studio) {
       const res = await studio.exportFile({ name: baseName + '.svg', content: svg });
       if (res && res.error) {
@@ -1144,26 +1242,30 @@ async function exportPNG() {
     const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(svgBlob);
 
-    const img = new Image();
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = reject;
-      img.src = url;
-    });
+    // 解码/绘制的任一路径（含 img.onerror）都必须释放 Object URL（M8）
+    let pngBlob;
+    try {
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = url;
+      });
 
-    const scale = 2;
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(img.width * scale));
-    canvas.height = Math.max(1, Math.round(img.height * scale));
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    URL.revokeObjectURL(url);
+      const scale = 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    } finally {
+      URL.revokeObjectURL(url);
+    }
 
-    const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-
-    const baseName = currentFileName.replace(/\.(bpmn|dmn)$/i, '');
+    const baseName = currentFileName.replace(/\.(bpmn|dmn|xml)$/i, ''); // 同 L12
     if (studio) {
       const buffer = await pngBlob.arrayBuffer();
       const res = await studio.exportFile({
@@ -1222,6 +1324,8 @@ async function copyTextToClipboard(text) {
 // 注意: _stackIdx 是 diagram-js 内部字段，升级后需复核此假设（见下方注释处）。
 let savedStackIdx = null;
 
+// 仅 BPMN（M5 已知限制）：DMN 无跨视图统一命令栈，保存后基线靠事件近似清零，
+// DMN 模式恒返回 null；精确游标留待 ActiveEditorContext 重构。
 function currentStackIdx() {
   if (!bpmnModeler) return null;
   try {
@@ -1845,8 +1949,9 @@ async function applyXmlEdits() {
     return;
   }
 
-  // 预检（格式良好性 + BPMNDI 存在）——在触碰画布之前直接给出友好错误
-  const preErr = precheckBpmnXml(editedXml);
+  // 预检（模式感知，M4）：BPMN 需 BPMNDI；DMN 仅查格式良好性（缺 DI 有视图回退）
+  const isDmn = editorMode === 'dmn';
+  const preErr = isDmn ? precheckDmnXml(editedXml) : precheckBpmnXml(editedXml);
   if (preErr) {
     showError({
       title: 'XML 预检失败',
@@ -1863,7 +1968,9 @@ async function applyXmlEdits() {
   try {
     // 快照先于 ensureModeler：平台切换会销毁旧 modeler
     const previousXml = await snapshotCurrentXml();
-    const modeler = ensureModeler(editedXml);
+    // DMN 模态下 dmnModeler 必存在（ensureEditorMode 已建）；BPMN 走平台切换重建
+    const modeler = isDmn ? dmnModeler : ensureModeler(editedXml);
+    if (!modeler) throw new Error('编辑器尚未就绪，请重新打开图表');
     let warnings = [];
     try {
       ({ warnings } = await modeler.importXML(editedXml));
@@ -1877,11 +1984,13 @@ async function applyXmlEdits() {
       throw err;
     }
 
-    // 与 setBpmnDiagram 相同的根元素可渲染校验
-    assertRenderableBpmnRoot(modeler, warnings, editedXml);
+    if (!isDmn) {
+      // 与 setBpmnDiagram 相同的根元素可渲染校验（DMN 无对应断言，导入自带视图回退）
+      assertRenderableBpmnRoot(modeler, warnings, editedXml);
 
-    // 导入成功 = 命令栈已重建，旧存档游标作废（non-dirty 判定完全交由 onBpmnStackChanged）
-    savedStackIdx = null;
+      // 导入成功 = 命令栈已重建，旧存档游标作废（non-dirty 判定完全交由 onBpmnStackChanged）
+      savedStackIdx = null;
+    }
 
     if (warnings && warnings.length) {
       console.warn('apply warnings', warnings);
@@ -1890,16 +1999,17 @@ async function applyXmlEdits() {
       hideNotice();
     }
 
-    // keep file identity; edits are unsaved relative to last saved content
-    lastSavedAt = null;
+    // keep file identity; edits are unsaved relative to last saved content.
+    // 不再清 lastSavedAt（L1）：最近一次真实保存时间是历史事实，内容偏离由脏标记表达
     setDirty(lastSavedXML !== null && editedXml !== lastSavedXML);
 
-    setStatus('已应用 XML 修改（' + (PLATFORMS[currentPlatform] && PLATFORMS[currentPlatform].label) + '）');
+    setStatus(isDmn ? '已应用 XML 修改（DMN）' : '已应用 XML 修改（' + (PLATFORMS[currentPlatform] && PLATFORMS[currentPlatform].label) + ')');
     updateTitle();
 
     setXmlEditMode(false);
     await refreshXmlView();
-    modeler.get('canvas').zoom('fit-viewport', 'auto');
+    const fitCanvas = isDmn ? dmnGet('canvas') : modeler.get('canvas');
+    if (fitCanvas) fitCanvas.zoom('fit-viewport', 'auto');
     setXmlStatus('修改已应用并重新导入模型');
   } catch (err) {
     console.error(err);
@@ -2222,8 +2332,8 @@ $('#btn-open').addEventListener('click', openFile);
 $('#btn-save').addEventListener('click', () => saveFile(false));
 $('#btn-export-svg').addEventListener('click', exportSVG);
 $('#btn-export-png').addEventListener('click', exportPNG);
-$('#btn-undo').addEventListener('click', () => bpmnModeler && bpmnModeler.get('undo').undo());
-$('#btn-redo').addEventListener('click', () => bpmnModeler && bpmnModeler.get('undo').redo());
+$('#btn-undo').addEventListener('click', () => { const cs = undoStack(); if (cs) cs.undo(); });
+$('#btn-redo').addEventListener('click', () => { const cs = undoStack(); if (cs) cs.redo(); });
 $('#btn-zoom-in').addEventListener('click', () => zoomBy(1.25));
 $('#btn-zoom-out').addEventListener('click', () => zoomBy(0.8));
 $('#btn-zoom-fit').addEventListener('click', zoomFit);
@@ -2550,7 +2660,14 @@ $('#btn-theme').addEventListener('click', toggleTheme);
 els.fileInput.addEventListener('change', async () => {
   const file = els.fileInput.files[0];
   if (!file) return;
-  const content = await file.text();
+  let content;
+  try {
+    content = await file.text();
+  } catch (err) {
+    console.error(err);
+    showError({ title: `读取文件失败：${file.name}`, message: err.message || String(err), error: err });
+    return;
+  }
   await openDiagramContent(content, file.name, null);
 });
 
@@ -2569,7 +2686,14 @@ els.canvas.addEventListener('drop', async (e) => {
   const files = e.dataTransfer.files;
   if (!files.length) return;
   const file = files[0];
-  const content = await file.text();
+  let content;
+  try {
+    content = await file.text();
+  } catch (err) {
+    console.error(err);
+    showError({ title: `读取文件失败：${file.name}`, message: err.message || String(err), error: err });
+    return;
+  }
   await openDiagramContent(content, file.name, null);
 });
 
@@ -2590,13 +2714,13 @@ if (studio) {
       case 'export-svg': return exportSVG();
       case 'export-png': return exportPNG();
       case 'undo': {
-        const u = activeService('undo');
-        if (u) u.undo();
+        const cs = undoStack();
+        if (cs) cs.undo();
         return;
       }
       case 'redo': {
-        const u = activeService('undo');
-        if (u) u.redo();
+        const cs = undoStack();
+        if (cs) cs.redo();
         return;
       }
       case 'zoom-in': return zoomBy(1.25);
@@ -2641,22 +2765,34 @@ document.addEventListener('keydown', (e) => {
   else if (k === 'n') { e.preventDefault(); createNewDiagram(); }
   else if (k === 'o') { e.preventDefault(); openFile(); }
   else if (k === 's') {
+    // 与 Electron 菜单语义对齐（M12）：Ctrl+S 保存、Ctrl+Shift+S 另存（浏览器无菜单，保持一致）
     e.preventDefault();
-    e.shiftKey ? exportSVG() : saveFile(false);
+    saveFile(e.shiftKey);
   } else if (k === 'p' && e.shiftKey) { e.preventDefault(); exportPNG(); }
   else if (k === 'b' && e.shiftKey) { e.preventDefault(); togglePropertiesPanel(); }
+  else if (k === 'f' && e.shiftKey) { e.preventDefault(); zoomFit(); } // 菜单 Ctrl+Shift+F = 适应画布（M13）
   else if (k === 'f') { e.preventDefault(); openSearch(); }
   else if (k === 'd' && e.shiftKey) { e.preventDefault(); toggleTheme(); }
   else if (k === 'z') {
     e.preventDefault();
-    const u = activeService('undo');
-    if (u) { e.shiftKey ? u.redo() : u.undo(); }
+    const cs = undoStack();
+    if (cs) { e.shiftKey ? cs.redo() : cs.undo(); }
   }
   else if (k === 'y') {
     e.preventDefault();
-    const u = activeService('undo');
-    if (u) u.redo();
+    const cs = undoStack();
+    if (cs) cs.redo();
   }
+  // ——以下与 Electron 菜单加速器对等（M13：浏览器端此前完全缺失）——
+  else if (k === '=' || k === '+') { e.preventDefault(); zoomBy(1.25); }
+  else if (k === '-' || k === '_') { e.preventDefault(); zoomBy(0.8); }
+  else if (k === '0') {
+    e.preventDefault();
+    const c = activeService('canvas');
+    if (c) c.zoom(1);
+    setZoomStatus();
+  }
+  else if (k === ' ' && !e.shiftKey) { e.preventDefault(); toggleSimulation(); }
 });
 
 // --- 关窗守护（浏览器端）：Electron 由主进程 close 拦截接管，此处只负责纯浏览器构建 -------
@@ -2675,11 +2811,16 @@ window.addEventListener('unhandledrejection', (event) => {
   if (lastError) return;
   const err = event.reason;
   if (!err) return;
-  showError({
-    title: '未捕获的异步错误',
-    message: (err && err.message) || String(err),
-    error: err instanceof Error ? err : undefined
-  });
+  try {
+    showError({
+      title: '未捕获的异步错误',
+      message: (err && err.message) || String(err),
+      error: err instanceof Error ? err : undefined
+    });
+  } catch (showErr) {
+    // 兑底路径自身不得再抛（L9）：否则错误被静默吞掉且可能递归触发监听器
+    console.error('failed to surface unhandled rejection', showErr, err);
+  }
 });
 
 window.addEventListener('error', (event) => {
@@ -2701,5 +2842,12 @@ window.addEventListener('error', (event) => {
     const theme = await loadStoredTheme();
     applyTheme(theme || 'auto');
   } catch { /* never let boot fail on theme */ }
-  createNewDiagram();
+  // 启动首图必须 await（L7）：否则后续同步代码可能在未完成的导入上继续跑
+  await createNewDiagram();
+  // macOS 下工具栏提示用 ⌘ 与菜单加速器观感一致（L14）；提示文案在 index.html 中硬编码 Ctrl
+  if (studio && studio.platform === 'darwin') {
+    for (const el of document.querySelectorAll('[title*="Ctrl+"]')) {
+      el.title = el.title.replace(/Ctrl\+/g, '⌘');
+    }
+  }
 })();

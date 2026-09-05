@@ -114,6 +114,26 @@ const FS_DESCRIPTIONS = {
     title: '路径中的目录不存在',
     message: '目标路径中的某个目录不存在。',
     suggestion: '请确认保存路径中的目录存在后重试。'
+  },
+  EEXIST: {
+    title: '文件已存在',
+    message: '目标位置已存在同名文件或目录，操作被拒绝。',
+    suggestion: '请换一个文件名，或先移除已存在的同名项。'
+  },
+  EMFILE: {
+    title: '进程文件句柄耗尽',
+    message: '当前进程打开的文件描述符已达上限（EMFILE）。',
+    suggestion: '请重启应用；若反复出现，请减少同时打开的文件数量。'
+  },
+  ENFILE: {
+    title: '系统文件句柄耗尽',
+    message: '操作系统层面的文件句柄已耗尽（ENFILE）。',
+    suggestion: '请关闭其他占用大量文件的程序后重试。'
+  },
+  ENAMETOOLONG: {
+    title: '路径过长',
+    message: '文件路径超出系统长度限制。',
+    suggestion: '请把文件移到更浅的目录，或缩短文件名后重试。'
   }
 };
 

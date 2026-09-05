@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <!-- CSP：dev（vite 同源 + HMR ws:）与 prod（Electron file:// 'self' 同 scheme）均可用；
        style 保留 'unsafe-inline'（vite 注入 + 运行时内联样式），script 严格 'self'。 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws:; worker-src 'self' blob:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:">
   <title>BPMN Studio</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <button id="btn-open" class="tool" title="打开文件 (Ctrl+O)">打开…</button>
         <button id="btn-save" class="tool" title="保存 (Ctrl+S)">保存</button>
         <span class="sep"></span>
-        <button id="btn-export-svg" class="tool" title="导出 SVG (Ctrl+Shift+S)">SVG</button>
+        <button id="btn-export-svg" class="tool" title="导出 SVG">SVG</button>
         <button id="btn-export-png" class="tool" title="导出 PNG (Ctrl+Shift+P)">PNG</button>
         <span class="sep"></span>
         <button id="btn-info" class="tool" title="查看当前 BPMN 文件与图表元数据">ⓘ</button>
@@ -109,7 +109,7 @@
     </footer>
   </div>
 
-  <input type="file" id="file-input" accept=".bpmn,.dmn,.xml,.txt" class="hidden" />
+  <input type="file" id="file-input" accept=".bpmn,.dmn,.xml" class="hidden" />
 
   <!-- 大号错误 / 警告遮罩层 -->
   <div id="error-overlay" class="app-overlay hidden">
