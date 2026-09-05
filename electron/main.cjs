@@ -87,9 +87,34 @@ function createWindow() {
     win.maximize();
   }
 
-  win.on('close', () => saveWindowState(win));
+  // 未保存变更关窗守护（v0.1.10）：渲染进程通过 window:dirty-state 推送脏标记；
+  // 脏且未放行时拦截关闭，弹三选框（取消/保存并关闭/放弃变更）。
+  win.on('close', (e) => {
+    saveWindowState(win);
+    if (!win.__studioDirty || win.__studioAllowClose) return;
+    e.preventDefault();
+    dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: ['取消', '保存并关闭', '放弃变更'],
+      defaultId: 0,
+      cancelId: 0,
+      message: '有未保存的变更',
+      detail: `关闭「${win.getTitle().replace(/ \*? — BPMN Studio$/, '')}」将丢失未保存的编辑。`
+    }).then(({ response }) => {
+      if (response === 1) {
+        // 保存并关闭：渲染进程执行 saveFile，成功后回 window:close-ok 再关
+        win.webContents.send('window:save-then-close');
+      } else if (response === 2) {
+        win.__studioAllowClose = true;
+        win.close();
+      }
+      // response === 0（取消）：什么都不做，窗口保持打开
+    });
+  });
 
-  win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  // BPMN_STUDIO_DEBUG=1 → 附加 ?debug 启用渲染端 debugGlobals（CDP 验证脚本取 __bpmnModeler）
+  const loadOptions = process.env.BPMN_STUDIO_DEBUG === '1' ? { query: { debug: '1' } } : undefined;
+  win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), loadOptions);
   return win;
 }
 
@@ -290,6 +315,21 @@ ipcMain.handle('file:stat', async (_event, filePath) => {
 ipcMain.on('window:title', (event, title) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) win.setTitle(title || 'BPMN Studio');
+});
+
+// --- IPC: unsaved-changes close guard (v0.1.10) -------------------------------
+ipcMain.on('window:dirty-state', (event, dirty) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) win.__studioDirty = !!dirty;
+});
+
+ipcMain.on('window:close-ok', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) {
+    win.__studioAllowClose = true;
+    win.__studioDirty = false;
+    win.close();
+  }
 });
 
 // --- IPC: lightweight preference store (userData/preferences.json) -----------

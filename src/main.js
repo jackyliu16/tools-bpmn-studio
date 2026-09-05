@@ -1070,15 +1070,19 @@ function basename(p) {
   return String(p).split(/[\\/]/).pop();
 }
 
+/**
+ * 保存当前图表。返回值表示是否真正完成保存（v0.1.10 关窗守护需要据此决定是否放行关闭）：
+ * true = 已写入并 markSaved；false = 取消对话框/失败。
+ */
 async function saveFile(forceAs = false) {
   let xml;
   try {
     xml = await saveActiveXml();
-    if (xml === null) return;
+    if (xml === null) return false;
   } catch (err) {
     console.error(err);
     showError({ title: '导出 XML 失败', message: err.message || String(err), error: err });
-    return;
+    return false;
   }
 
   const mime = editorMode === 'dmn' ? 'application/dmn+xml' : 'application/bpmn20-xml';
@@ -1090,10 +1094,10 @@ async function saveFile(forceAs = false) {
         defaultPath: forceAs ? currentFileName : (currentFilePath || currentFileName),
         forceAs
       });
-      if (!result) return;
+      if (!result) return false;
       if (result.error) {
         showFsError(result);
-        return;
+        return false;
       }
       currentFilePath = result.path;
       currentFileName = basename(result.path);
@@ -1106,7 +1110,9 @@ async function saveFile(forceAs = false) {
   } catch (err) {
     console.error(err);
     showError({ title: '保存文件失败', message: err.message || String(err), error: err });
+    return false;
   }
+  return true;
 }
 
 async function exportSVG() {
@@ -1266,6 +1272,8 @@ function setDirty(dirty) {
   isDirty = dirty;
   els.dirty.classList.toggle('hidden', !dirty);
   updateTitle();
+  // 单点广播给主进程，供关窗守门使用（v0.1.10，仅 Electron）
+  if (studio) studio.setDirtyState(dirty);
 }
 
 // --- ui helpers -------------------------------------------------------------------
@@ -2608,6 +2616,13 @@ if (studio) {
       case 'file-info': return openMetadataDialog();
       case 'toggle-theme': return toggleTheme();
     }
+  });
+
+  // 关窗守门「保存并关闭」（v0.1.10）：主进程 close 拦截后下发；仅当真正保存成功才回报放行关闭，
+  // 另存对话框取消/失败则不回报，窗口保持打开。
+  studio.onSaveBeforeClose(async () => {
+    const ok = await saveFile(false);
+    if (ok) studio.allowWindowClose();
   });
 }
 

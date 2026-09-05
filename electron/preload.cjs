@@ -32,6 +32,17 @@ contextBridge.exposeInMainWorld('bpmnStudio', {
     ipcRenderer.on('menu:action', (_event, action) => callback(action));
   },
 
+  /** push dirty state to main for the unsaved-changes close guard (v0.1.10) */
+  setDirtyState: (dirty) => ipcRenderer.send('window:dirty-state', !!dirty),
+
+  /** main intercepted a close while dirty and asks the renderer to save first */
+  onSaveBeforeClose: (callback) => {
+    ipcRenderer.on('window:save-then-close', () => callback());
+  },
+
+  /** renderer finished saving; main may proceed with the close */
+  allowWindowClose: () => ipcRenderer.send('window:close-ok'),
+
   /** @returns {Promise<{app, electron, chrome, node, platform} | null>} */
   getVersions: () => ipcRenderer.invoke('app:versions'),
 
