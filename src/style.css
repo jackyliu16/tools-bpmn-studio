@@ -131,6 +131,14 @@ html, body {
 
 .tool:hover { background: var(--surface-hover); border-color: var(--border); }
 
+/* 置灰态（如 DMN 视图 tab 对应模型不存在的视图）：去掉悬停反馈，避免看起来可点 */
+.tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: transparent;
+  border-color: transparent;
+}
+
 .tool.active {
   background: var(--surface-active-bg);
   border-color: var(--accent);

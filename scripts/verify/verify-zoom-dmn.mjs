@@ -43,7 +43,7 @@ const app = spawn(appimage, [
   '--disable-gpu',
   '--ozone-platform=x11',
   `--remote-debugging-port=${PORT}`
-], { stdio: 'ignore', env: { ...process.env, DISPLAY } });
+], { stdio: 'ignore', env: { ...process.env, DISPLAY, BPMN_STUDIO_DEBUG: '1' } });
 
 let failed = 0;
 const results = [];
@@ -165,6 +165,27 @@ await click('#btn-dmn-decision-table');
 await sleep(600);
 const d3 = await zoomNum();
 check('zoom label follows view switch', Number.isFinite(d3), `decision table → ${d3}%`);
+
+// --- L5/L6: tab highlight follows the real active view (regression for the dead
+// 'view.switch' listener — dmn-js actually fires 'views.changed') ------------------
+const tabState = await evaluate(`(() => {
+  const active = (window.__dmnModeler.getActiveView() || {}).type;
+  const cls = k => document.querySelector('#btn-dmn-' + k).classList.contains('active');
+  return JSON.stringify({ active, drd: cls('drd'), dt: cls('decision-table'), le: cls('literal-expression') });
+})()`);
+const ts = JSON.parse(tabState);
+check('L5/L6 tab highlight follows real active view (switched to decisionTable)',
+  ts.active === 'decisionTable' && ts.dt === true && ts.drd === false, tabState);
+
+// literalExpression is not in the empty DMN model → its tab must be disabled (not a silent dead click)
+const leDisabled = await evaluate(`document.querySelector('#btn-dmn-literal-expression').disabled`);
+check('L5/L6 tab for an absent view type is disabled (literalExpression absent)', leDisabled === true);
+
+// clicking the disabled tab must not move the active view
+await evaluate(`document.querySelector('#btn-dmn-literal-expression').click()`);
+await sleep(300);
+const afterDead = await evaluate(`(window.__dmnModeler.getActiveView() || {}).type`);
+check('L5/L6 clicking absent view tab does not change active view', afterDead === 'decisionTable', afterDead);
 
 console.log('\n' + results.join('\n'));
 console.log(`\n${failed === 0 ? 'ALL CHECKS PASSED' : failed + ' CHECK(S) FAILED'} (${results.length} total)`);

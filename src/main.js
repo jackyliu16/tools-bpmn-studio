@@ -659,13 +659,13 @@ function bindDmnModelerEvents(modeler) {
     updateDmnViewTabs();
   });
 
-  modeler.on('view.switch', (event) => {
+  // dmn-js 17 根本没有 'view.switch' 事件（旧监听器从未命中过 —— 视图切换/列表变化
+  // 统一走 views.changed）：接上它才能修好 tab 高亮不跟随、currentDmnView 恒为 drd
+  // 导致元数据/XML 导出注释报错视图的 L5/L6 边界 bug。
+  modeler.on('views.changed', ({ views, activeView }) => {
     if (dmnModeler !== modeler) return;
-    const { activeView } = event;
-    if (activeView && activeView.type) {
-      currentDmnView = activeView.type;
-      updateDmnViewTabs();
-    }
+    if (activeView && activeView.type) currentDmnView = activeView.type;
+    updateDmnViewTabs(views);
   });
 
   modeler.on('selection.changed', (event) => {
@@ -797,14 +797,19 @@ async function saveActiveSvg() {
 }
 if (debugGlobals) window.__saveActiveSvg = saveActiveSvg; // CDP 回归验证用
 
-function updateDmnViewTabs() {
-  const views = {
+function updateDmnViewTabs(viewList) {
+  // 高亮 = dmn-js 真实 activeView；模型里没有的视图类型置灰（死点不再静默）
+  const available = new Set(
+    (viewList || (dmnModeler ? dmnModeler.getViews() : [])).map((v) => v.type)
+  );
+  const buttons = {
     'drd': els.btnDmnDrd,
     'decisionTable': els.btnDmnDecisionTable,
     'literalExpression': els.btnDmnLiteralExpression
   };
-  for (const [key, btn] of Object.entries(views)) {
+  for (const [key, btn] of Object.entries(buttons)) {
     btn.classList.toggle('active', key === currentDmnView);
+    btn.disabled = !available.has(key);
   }
 }
 
@@ -813,10 +818,13 @@ async function switchDmnView(viewType) {
   try {
     const views = dmnModeler.getViews();
     const targetView = views.find(v => v.type === viewType);
-    if (targetView) {
-      await dmnModeler.open(targetView);
-      setZoomStatus();
+    if (!targetView) {
+      // 此前 find 不到直接吞掉：点模型不存在的视图 tab 完全静默，用户以为坏了
+      setStatus('当前 DMN 模型没有该类型视图');
+      return;
     }
+    await dmnModeler.open(targetView);
+    setZoomStatus();
   } catch (err) {
     console.error('switch DMN view failed', err);
     showError({
