@@ -159,8 +159,9 @@ html, body {
   position: relative;
 }
 
-/* canvas drop hint */
-#js-canvas[data-dragging="true"] {
+/* canvas drop hint（Fix 15：BPMN/DMN 两块画布都支持拖放打开） */
+#js-canvas[data-dragging="true"],
+#js-dmn-canvas[data-dragging="true"] {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
 }

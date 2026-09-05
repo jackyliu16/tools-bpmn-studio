@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('bpmnStudio', {
   /** @returns {Promise<{path: string} | null>} */
   saveDiagram: (payload) => ipcRenderer.invoke('dialog:save-diagram', payload),
 
+  /** 直写已确认路径（保存时已有 currentFilePath，不再弹另存框）
+   * @returns {Promise<{path: string} | {error: object}>} */
+  saveDiagramDirect: (payload) => ipcRenderer.invoke('dialog:save-diagram-direct', payload),
+
   /** @returns {Promise<{path: string} | null>} */
   exportFile: (payload) => ipcRenderer.invoke('dialog:export-file', payload),
 

@@ -48,11 +48,9 @@
         <button id="btn-xml" class="tool" title="查看当前图表的完整 XML，选中节点时高亮对应段落">XML</button>
       </div>
 
-      <div class="group dmn-view-tabs hidden" id="dmn-view-tabs">
-        <button id="btn-dmn-drd" class="tool active" title="切换到 DRD 视图">DRD</button>
-        <button id="btn-dmn-decision-table" class="tool" title="切换到决策表视图">决策表</button>
-        <button id="btn-dmn-literal-expression" class="tool" title="切换到文字表达式视图">文字表达式</button>
-      </div>
+      <!-- DMN 视图 tab（Fix 9）：由 updateDmnViewTabs 按 dmn-js getViews() 动态生成，
+           同类型多视图（多决策表/文字表达式/盒装表达式）各有独立 tab，此处不再硬编码 -->
+      <div class="group dmn-view-tabs hidden" id="dmn-view-tabs"></div>
 
       <div class="group mode">
         <button id="btn-simulate" class="tool" title="开始/停止 令牌模拟">▶ 模拟</button>

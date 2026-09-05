@@ -213,9 +213,6 @@ const els = {
   xmlAutoscroll: $('#xml-autoscroll'),
   dmnCanvas: $('#js-dmn-canvas'),
   dmnViewTabs: $('#dmn-view-tabs'),
-  btnDmnDrd: $('#btn-dmn-drd'),
-  btnDmnDecisionTable: $('#btn-dmn-decision-table'),
-  btnDmnLiteralExpression: $('#btn-dmn-literal-expression'),
   panelRegion: $('#panel-region'),
   panelCollapseBtn: $('#panel-collapse-btn')
 };
@@ -263,7 +260,9 @@ let currentXml = '';
 // --- DMN state -----------------------------------------------------------
 let editorMode = 'bpmn';  // 'bpmn' | 'dmn'
 let dmnModeler = null;
-let currentDmnView = 'drd'; // 'drd' | 'decisionTable' | 'literalExpression'
+let currentDmnView = 'drd'; // 'drd' | 'decisionTable' | 'literalExpression' | 'boxedExpression'
+// 活动视图标识 `type::id`：tab 动态生成后同类型可有多个视图，高亮判定需精确到实例
+let currentDmnViewKey = null;
 
 // --- theme state ---------------------------------------------------------
 // 持久化：Electron 优先走主进程 pref store（sandbox + file:// 下 localStorage 不落盘），
@@ -605,6 +604,13 @@ function destroyModeler() {
   simulateMode = false;
   $('#btn-simulate').textContent = '▶ 模拟';
   $('#btn-simulate').classList.remove('active');
+  // Fix 10：小地图随模型销毁，按钮 active 态必须同步清除，否则新图上按钮亮着但无小地图
+  $('#btn-minimap').classList.remove('active');
+  // Fix 3/11：模型销毁时退出 XML 面板编辑态并清残留选中信息——否则旧图的编辑态
+  // 内容会被 Apply 进新图，且状态栏挂着已销毁模型的元素 id
+  if (xmlEditing) setXmlEditMode(false);
+  xmlDetached = false;
+  els.statusRight.textContent = '';
   editorMode = 'bpmn';
 }
 
@@ -616,6 +622,7 @@ function createDmnEditor() {
   if (debugGlobals) window.__dmnModeler = modeler;
 
   els.dmnViewTabs.classList.remove('hidden');
+  updateDmnViewTabs(); // 空模型：渲染禁用占位 tab（Fix 9），不留上次会话残留
   setStatus('就绪（DMN 决策建模）— 从 DRD 视图开始建模');
   return modeler;
 }
@@ -632,6 +639,11 @@ function destroyDmnEditor() {
   els.dmnCanvas.innerHTML = '';
   els.dmnViewTabs.classList.add('hidden');
   currentDmnView = 'drd';
+  currentDmnViewKey = null;
+  // Fix 3/11：同 destroyModeler——退出 XML 编辑态，清选中信息残留
+  if (xmlEditing) setXmlEditMode(false);
+  xmlDetached = false;
+  els.statusRight.textContent = '';
 }
 
 function switchToDmnMode() {
@@ -653,8 +665,13 @@ function switchToBpmnMode() {
 }
 
 function bindDmnModelerEvents(modeler) {
-  modeler.on('import.done', () => {
+  modeler.on('import.done', (event) => {
     if (dmnModeler !== modeler) return;
+    // Fix 16：import.done 也可能携带可恢复错误，不能无条件宣称「导入完成」
+    if (event && event.error) {
+      setStatus('DMN 导入失败：' + (event.error.message || String(event.error)));
+      return;
+    }
     setStatus('DMN 导入完成');
     updateDmnViewTabs();
   });
@@ -664,8 +681,9 @@ function bindDmnModelerEvents(modeler) {
   // 导致元数据/XML 导出注释报错视图的 L5/L6 边界 bug。
   modeler.on('views.changed', ({ views, activeView }) => {
     if (dmnModeler !== modeler) return;
-    if (activeView && activeView.type) currentDmnView = activeView.type;
-    updateDmnViewTabs(views);
+    // updateDmnViewTabs 同步 currentDmnView / currentDmnViewKey 与 tab 高亮（Fix 9/20）
+    updateDmnViewTabs(views, activeView);
+    setZoomStatus(); // 下钻/切视图后同步缩放标签（Fix 12）：新视图自带缩放态
   });
 
   modeler.on('selection.changed', (event) => {
@@ -736,7 +754,8 @@ async function saveActiveXml() {
   const modeler = getActiveModeler();
   if (!modeler) return null;
   const { xml } = await modeler.saveXML({ format: true });
-  return xml;
+  // Fix 19：守门空结果（undefined/空串）统一归一为 null，与全库 null 契约一致
+  return xml || null;
 }
 
 /**
@@ -797,33 +816,94 @@ async function saveActiveSvg() {
 }
 if (debugGlobals) window.__saveActiveSvg = saveActiveSvg; // CDP 回归验证用
 
-function updateDmnViewTabs(viewList) {
-  // 高亮 = dmn-js 真实 activeView；模型里没有的视图类型置灰（死点不再静默）
-  const available = new Set(
-    (viewList || (dmnModeler ? dmnModeler.getViews() : [])).map((v) => v.type)
-  );
-  const buttons = {
-    'drd': els.btnDmnDrd,
-    'decisionTable': els.btnDmnDecisionTable,
-    'literalExpression': els.btnDmnLiteralExpression
+// DMN 视图 tab（Fix 9）：由 dmn-js getViews() 动态生成——覆盖全部已注册视图类型
+// （含 boxedExpression），同类型多视图（多决策表/多文字表达式）各有独立 tab，
+// 关闭「find 取首个 → 其余视图不可达」的历史遗留；模型中不存在的已知类型仍渲染
+// 禁用占位（锚点可见、点击不静默失效的既有语义不变）。
+const DMN_VIEW_LABELS = {
+  drd: 'DRD',
+  decisionTable: '决策表',
+  literalExpression: '文字表达式',
+  boxedExpression: '盒装表达式'
+};
+
+// 每类视图的首个 tab 保留历史固定 id（CDP 回归脚本与样式依赖该锚点）；
+// 同类型后续视图用 `-N` 后缀 id；模型中无该类型时锚点落在禁用占位上
+const DMN_TAB_IDS = {
+  drd: 'btn-dmn-drd',
+  decisionTable: 'btn-dmn-decision-table',
+  literalExpression: 'btn-dmn-literal-expression',
+  boxedExpression: 'btn-dmn-boxed-expression'
+};
+
+function dmnViewKey(view) {
+  return view ? `${view.type}::${view.id}` : null;
+}
+
+function updateDmnViewTabs(viewList, activeView) {
+  const views = viewList || (dmnModeler ? dmnModeler.getViews() : []);
+  if (activeView) {
+    currentDmnViewKey = dmnViewKey(activeView);
+    if (activeView.type) currentDmnView = activeView.type;
+  }
+
+  els.dmnViewTabs.innerHTML = '';
+  const perTypeCount = {};
+  const appendTab = ({ view, enabled, type }) => {
+    const t = type || view.type;
+    const label = DMN_VIEW_LABELS[t] || t;
+    const btn = document.createElement('button');
+    btn.className = 'tool';
+    // 名称与类型标签重复时不叠加（如空模型 DRD 的 name 就是 'DRD'）
+    const name = view && view.name && view.name !== label ? view.name : null;
+    btn.textContent = name ? `${label}·${name}` : label;
+    btn.title = `切换到${label}视图${name ? `（${name}）` : ''}`;
+    if (DMN_TAB_IDS[t]) {
+      btn.id = enabled
+        ? (perTypeCount[t] === 1
+            ? DMN_TAB_IDS[t]
+            : `${DMN_TAB_IDS[t]}-${perTypeCount[t]}`)
+        : DMN_TAB_IDS[t];
+    }
+    if (enabled) {
+      btn.classList.toggle('active', dmnViewKey(view) === currentDmnViewKey);
+      const captured = view;
+      btn.addEventListener('click', () => openDmnView(captured));
+    } else {
+      btn.disabled = true; // 占位：模型没有该类型视图，不得成为可点的死按钮
+    }
+    els.dmnViewTabs.appendChild(btn);
   };
-  for (const [key, btn] of Object.entries(buttons)) {
-    btn.classList.toggle('active', key === currentDmnView);
-    btn.disabled = !available.has(key);
+
+  for (const view of views) {
+    perTypeCount[view.type] = (perTypeCount[view.type] || 0) + 1;
+    appendTab({ view, enabled: true });
+  }
+  for (const type of Object.keys(DMN_VIEW_LABELS)) {
+    if (!perTypeCount[type]) appendTab({ enabled: false, type });
   }
 }
 
-async function switchDmnView(viewType) {
-  if (!dmnModeler) return;
+// 视图切换必须过 guarded()（Fix 1，锁契约）：dmnModeler.open(view) 会重挂 viewer、
+// 重建内部状态，与导入/新建并发交叠会把模型留在未定义状态
+function openDmnView(view) { return guarded(() => openDmnViewInner(view)); }
+
+async function openDmnViewInner(view) {
+  if (!dmnModeler || !view) return;
   try {
-    const views = dmnModeler.getViews();
-    const targetView = views.find(v => v.type === viewType);
-    if (!targetView) {
-      // 此前 find 不到直接吞掉：点模型不存在的视图 tab 完全静默，用户以为坏了
-      setStatus('当前 DMN 模型没有该类型视图');
+    // tab 上的 view 对象可能因结构变化过时：按 type+id 在最新视图列表复核
+    const target = (dmnModeler.getViews() || []).find(
+      (v) => v.type === view.type && v.id === view.id
+    );
+    if (!target) {
+      setStatus('当前 DMN 模型没有该视图');
+      updateDmnViewTabs(); // 以真实状态重同步 tab
       return;
     }
-    await dmnModeler.open(targetView);
+    await dmnModeler.open(target);
+    currentDmnViewKey = dmnViewKey(target);
+    currentDmnView = target.type;
+    updateDmnViewTabs();
     setZoomStatus();
   } catch (err) {
     console.error('switch DMN view failed', err);
@@ -863,12 +943,53 @@ function ensureEditorMode(fileType) {
 // --- diagram lifecycle -------------------------------------------------------
 async function setDiagram(xml, name, filePath) {
   const fileType = detectFileType(name || filePath || '');
-  ensureEditorMode(fileType);
+  const crossMode = (fileType === 'dmn' ? 'dmn' : 'bpmn') !== editorMode;
 
-  if (fileType === 'dmn') {
-    await setDmnDiagram(xml, name, filePath);
-  } else {
-    await setBpmnDiagram(xml, name, filePath);
+  // 跨模式切换前快照（Fix 7）：ensureEditorMode 会销毁原编辑器，若后续导入失败，
+  // 内层只能在新模式里恢复空骨架——原图永久丢失。先快照，失败时整体回滚。
+  const snapshot = crossMode
+    ? {
+        mode: editorMode,
+        xml: await snapshotCurrentXml(),
+        name: currentFileName,
+        path: currentFilePath
+      }
+    : null;
+
+  ensureEditorMode(fileType);
+  try {
+    if (fileType === 'dmn') {
+      await setDmnDiagram(xml, name, filePath);
+    } else {
+      await setBpmnDiagram(xml, name, filePath);
+    }
+  } catch (err) {
+    if (crossMode) await rollbackAfterFailedModeSwitch(snapshot);
+    throw err; // 调用方（打开/新建）统一展示错误卡片
+  }
+}
+
+/** 跨模式导入失败 → 恢复原编辑器模式并重导入切换前快照（Fix 7） */
+async function rollbackAfterFailedModeSwitch(snapshot) {
+  try {
+    ensureEditorMode(snapshot.mode);
+    if (snapshot.xml) {
+      if (snapshot.mode === 'dmn') {
+        await dmnModeler.importXML(snapshot.xml);
+      } else {
+        await ensureModeler(snapshot.xml).importXML(snapshot.xml);
+      }
+      currentFileName = snapshot.name;
+      currentFilePath = snapshot.path;
+      lastSavedXML = (await saveActiveXml()) || snapshot.xml;
+      await rebaseDirtyAfterRestore();
+      updateTitle();
+    }
+    if (xmlVisible) await refreshXmlView();
+    setZoomStatus();
+  } catch (rbErr) {
+    console.error('rollback after failed mode switch failed', rbErr);
+    setStatus('⚠ 导入失败，且恢复原图失败，画布可能为空');
   }
 }
 
@@ -906,8 +1027,9 @@ async function setDmnDiagram(xml, name, filePath) {
 
   currentFileName = name || 'untitled.dmn';
   currentFilePath = filePath || null;
-  // 基线 = 刚导入的内容（v0.1.10 静默丢失修复）：打开/新建后的编辑由此正确置脏
-  lastSavedXML = xml;
+  // 基线 = 导入后的序列化规范形态（Fix 5）：脏标记对比（XML Apply 路径）以同一序列化
+  // 输出为基准，消除「原始文件字节 vs 序列化输出」的格式差异假阳性；失败时退回原文
+  lastSavedXML = (await saveActiveXml()) || xml;
   lastSavedAt = null;
   setDirty(false); // 同 setBpmnDiagram：走 setDirty 同步 ★ 可见性与主进程脏状态
 
@@ -918,7 +1040,13 @@ async function setDmnDiagram(xml, name, filePath) {
     if (canvas) canvas.zoom('fit-viewport', 'auto');
   } catch { /* canvas may not be available in all views */ }
   setZoomStatus();
+  // 导入完成后强制收敛 tab 高亮与缩放标签（Fix 20）：views.changed 在导入期间会多次
+  // 触发，不依赖事件时序的瞬态，以显式收敛作为最终展示
+  updateDmnViewTabs();
 
+  // Fix 3：内容已被整体替换 → 必须退出编辑态，否则面板停留在旧图编辑缓冲里等待
+  // Apply（同模式 open/新建不走 destroyModeler，仅靠销毁路径兜不住）
+  if (xmlEditing) setXmlEditMode(false);
   if (xmlVisible) refreshXmlView();
 }
 
@@ -1030,16 +1158,16 @@ async function setBpmnDiagram(xml, name, filePath) {
     err.parseLocation = extractParseLocation(err);
     err.failedXml = xml;
     // 恢复上一个可用模型：失败导入已清空画布，不恢复则用户只看得到空白编辑区
-    await restorePreviousModel(modeler, previousXml);
+    // Fix 8：回滚用模型按快照自身平台创建——快照带 zeebe 而当前模型器是 camunda 时，
+    // 直接导回会丢 zeebe 扩展属性（这也是「/definitions 兜底」丢内容的根因）
+    const restoreModeler = previousXml ? ensureModeler(previousXml) : modeler;
+    await restorePreviousModel(restoreModeler, previousXml);
     await rebaseDirtyAfterRestore();
     throw err;
   }
 
   // lax 解析可能“成功”但根元素不可渲染 → 转成明确错误，而非空画布+面板崩溃
   assertRenderableBpmnRoot(modeler, warnings, xml);
-
-  // 导入成功 = 命令栈已清空重建，旧的存档游标作废（后续编辑一律置脏）
-  savedStackIdx = null;
 
   if (warnings && warnings.length) {
     console.warn('import warnings', warnings);
@@ -1050,8 +1178,11 @@ async function setBpmnDiagram(xml, name, filePath) {
 
   currentFileName = name || 'untitled.bpmn';
   currentFilePath = filePath || null;
-  // 基线 = 刚导入的内容（v0.1.10 静默丢失修复）：打开/新建后的编辑由此正确置脏
-  lastSavedXML = xml;
+  // 基线 = 导入后的序列化规范形态（Fix 5）：与 XML Apply 的脏对比同源于序列化输出；
+  // 序列化失败时退回原文（宁多勿漏方向）
+  lastSavedXML = (await saveActiveXml()) || xml;
+  // 命令栈游标：导入已清栈，此刻栈位即「零变更」基准，撤销到底自动回到干净态
+  savedStackIdx = currentStackIdx();
   lastSavedAt = null;
   // 必须走 setDirty 而非裸赋值：同步 ★ 可见性与主进程脏状态（裸赋值会残留旧图的 ★，
   // v0.1.10 验证脚本抓出）；其内部的 updateTitle 已刷新标题
@@ -1062,6 +1193,8 @@ async function setBpmnDiagram(xml, name, filePath) {
   $('#btn-minimap').classList.toggle('active', !!(modeler.get('minimap') && modeler.get('minimap').isOpen()));
   pushViewChecks();
 
+  // Fix 3：同 setDmnDiagram——内容已替换，旧图的编辑缓冲不得残留可 Apply 的编辑态
+  if (xmlEditing) setXmlEditMode(false);
   if (xmlVisible) refreshXmlView();
 }
 
@@ -1149,6 +1282,9 @@ async function guarded(fn) {
 function createNewDiagram() { return guarded(createNewDiagramInner); }
 function createNewDmnDiagram() { return guarded(createNewDmnDiagramInner); }
 function openDiagramContent(xml, name, filePath) { return guarded(() => openDiagramContentInner(xml, name, filePath)); }
+// Fix 1（锁契约）：XML Apply 会整体替换模型内容，与其他模型变更入口一样必须互斥；
+// 旧代码绕过 guarded，连打 Ctrl+Enter/叠加拖放打开会把两份内容交叠进同一画布
+function applyXmlEdits() { return guarded(applyXmlEditsInner); }
 
 // --- file open / save ---------------------------------------------------------
 async function openFile() {
@@ -1183,6 +1319,11 @@ function basename(p) {
  * true = 已写入并 markSaved；false = 取消对话框/失败。
  */
 async function saveFile(forceAs = false) {
+  // Fix 2：保存要序列化当前模型；导入/重建进行中读到半新半旧的内容会写出脏文件
+  if (_modelBusy) {
+    setStatus('上一个操作仍在处理中，请稍候…');
+    return false;
+  }
   let xml;
   try {
     xml = await saveActiveXml();
@@ -1197,20 +1338,41 @@ async function saveFile(forceAs = false) {
 
   try {
     if (studio) {
-      const result = await studio.saveDiagram({
-        content: xml,
-        defaultPath: forceAs ? currentFileName : (currentFilePath || currentFileName),
-        forceAs
-      });
-      if (!result) return false;
-      if (result.error) {
-        showFsError(result);
-        return false;
+      // Fix 6：已有已知路径且非「另存为」→ 直写文件，不再每次弹另存对话框
+      //（与常规编辑器语义一致；也让关窗守护的「保存并关闭」不再二次弹框）
+      if (!forceAs && currentFilePath) {
+        const res = await studio.saveDiagramDirect({
+          path: currentFilePath,
+          content: xml,
+          mode: editorMode
+        });
+        if (!res) return false;
+        if (res.error) {
+          showFsError(res);
+          return false;
+        }
+        currentFilePath = res.path;
+        currentFileName = basename(res.path);
+        markSaved(xml);
+        setStatus('已保存: ' + currentFilePath);
+      } else {
+        // Fix 17：把当前模式告知主进程，过滤器默认项跟随模式（DMN 优先 .dmn）
+        const result = await studio.saveDiagram({
+          content: xml,
+          defaultPath: forceAs ? currentFileName : (currentFilePath || currentFileName),
+          forceAs,
+          mode: editorMode
+        });
+        if (!result) return false;
+        if (result.error) {
+          showFsError(result);
+          return false;
+        }
+        currentFilePath = result.path;
+        currentFileName = basename(result.path);
+        markSaved(xml);
+        setStatus('已保存: ' + currentFilePath);
       }
-      currentFilePath = result.path;
-      currentFileName = basename(result.path);
-      markSaved(xml);
-      setStatus('已保存: ' + currentFilePath);
     } else {
       downloadText(xml, currentFileName, mime);
       markSaved(xml);
@@ -1321,9 +1483,12 @@ async function copyTextToClipboard(text) {
     ta.value = text;
     document.body.appendChild(ta);
     ta.select();
-    document.execCommand('copy');
-    ta.remove();
-    return true;
+    // Fix 13：返回 execCommand 真实结果，兜底失败不再谎报成功（调用方会提示已复制）
+    try {
+      return document.execCommand('copy');
+    } finally {
+      ta.remove();
+    }
   }
 }
 
@@ -1952,7 +2117,7 @@ function getEditedXml() {
   return els.xmlCode.textContent;
 }
 
-async function applyXmlEdits() {
+async function applyXmlEditsInner() {
   const editedXml = getEditedXml();
   if (!editedXml.trim()) {
     showError({ title: 'XML 内容为空', message: '内容为空，无法应用。' });
@@ -1989,7 +2154,9 @@ async function applyXmlEdits() {
       err.parseLocation = extractParseLocation(err);
       err.failedXml = editedXml;
       // 恢复上一个可用模型：失败导入已清空画布/替换 definitions
-      await restorePreviousModel(modeler, previousXml);
+      // Fix 8：回滚用模型按快照自身平台创建（同 setBpmnDiagram 失败路径）
+      const restoreModeler = !isDmn && previousXml ? ensureModeler(previousXml) : modeler;
+      await restorePreviousModel(restoreModeler, previousXml);
       await rebaseDirtyAfterRestore();
       throw err;
     }
@@ -2011,7 +2178,11 @@ async function applyXmlEdits() {
 
     // keep file identity; edits are unsaved relative to last saved content.
     // 不再清 lastSavedAt（L1）：最近一次真实保存时间是历史事实，内容偏离由脏标记表达
-    setDirty(lastSavedXML !== null && editedXml !== lastSavedXML);
+    // Fix 5：与基线同以「序列化规范形态」为同构基准比较（基线已在导入/保存时播种为
+    // 序列化输出），消除「直接应用原文件字节时序列化重排缩进/属性序」的 ★ 假阳性；
+    // 序列化异常时 canonicalXml 为 null → 保守置脏（宁多勿漏）
+    const canonicalXml = await saveActiveXml();
+    setDirty(lastSavedXML !== null && canonicalXml !== lastSavedXML);
 
     setStatus(isDmn ? '已应用 XML 修改（DMN）' : '已应用 XML 修改（' + (PLATFORMS[currentPlatform] && PLATFORMS[currentPlatform].label) + ')');
     updateTitle();
@@ -2375,6 +2546,14 @@ $('#btn-xml-close').addEventListener('click', toggleXmlView);
 $('#btn-xml-edit').addEventListener('click', () => setXmlEditMode(!xmlEditing));
 $('#btn-xml-apply').addEventListener('click', applyXmlEdits);
 $('#btn-xml-revert').addEventListener('click', () => setXmlEditMode(false));
+els.xmlCode.addEventListener('paste', (e) => {
+  // Fix 18：粘贴强制纯文本——阻断 contenteditable 引入富文本/HTML 结构节点，
+  // 保证 getEditedXml()（textContent 取文本）拿到的就是用户看到的字符流
+  if (!xmlEditing) return;
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+  document.execCommand('insertText', false, text);
+});
 els.xmlCode.addEventListener('keydown', (e) => {
   // Prevent Enter from inserting <br> / <div> inside the code element
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -2697,36 +2876,40 @@ els.fileInput.addEventListener('change', async () => {
   await openDiagramContent(content, file.name, null);
 });
 
-// --- drag & drop (browser & desktop) --------------------------------------------------------
-els.canvas.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'copy';
-  els.canvas.dataset.dragging = 'true';
-});
-els.canvas.addEventListener('dragleave', () => {
-  delete els.canvas.dataset.dragging;
-});
-els.canvas.addEventListener('drop', async (e) => {
-  e.preventDefault();
-  delete els.canvas.dataset.dragging;
-  const files = e.dataTransfer.files;
-  if (!files.length) return;
-  const file = files[0];
-  let content;
-  try {
-    content = await file.text();
-  } catch (err) {
-    console.error(err);
-    showError({ title: `读取文件失败：${file.name}`, message: err.message || String(err), error: err });
-    return;
-  }
-  await openDiagramContent(content, file.name, null);
-});
+// --- drag & drop (browser & desktop) ----------------------------------------
+// Fix 15：BPMN 与 DMN 画布都绑定拖放——旧实现只绑 BPMN，DMN 模式下拖入文件毫无反应
+function bindCanvasDrop(host) {
+  host.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    host.dataset.dragging = 'true';
+  });
+  host.addEventListener('dragleave', () => {
+    delete host.dataset.dragging;
+  });
+  host.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    delete host.dataset.dragging;
+    const files = e.dataTransfer.files;
+    if (!files.length) return;
+    const file = files[0];
+    let content;
+    try {
+      content = await file.text();
+    } catch (err) {
+      console.error(err);
+      showError({ title: `读取文件失败：${file.name}`, message: err.message || String(err), error: err });
+      return;
+    }
+    await openDiagramContent(content, file.name, null);
+  });
+}
+bindCanvasDrop(els.canvas);
+bindCanvasDrop(els.dmnCanvas);
 
-// --- DMN view tab wiring ---------------------------------------------------
-els.btnDmnDrd.addEventListener('click', () => switchDmnView('drd'));
-els.btnDmnDecisionTable.addEventListener('click', () => switchDmnView('decisionTable'));
-els.btnDmnLiteralExpression.addEventListener('click', () => switchDmnView('literalExpression'));
+// --- DMN view tabs -----------------------------------------------------------
+// tab 由 updateDmnViewTabs 按 getViews() 动态生成（Fix 9），点击处理器随 tab 一起绑定；
+// 切换入口 openDmnView 已过 guarded()（Fix 1）
 
 // --- menu actions (Electron) ------------------------------------------------------------------
 if (studio) {

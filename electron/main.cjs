@@ -31,6 +31,31 @@ function loadWindowState() {
   }
 }
 
+/** 原子写（Fix 4）：同目录临时文件 + rename —— rename 在同目录内是原子操作，
+ * 崩溃/磁盘满发生在写入中途时原文件保持旧内容，不会被截断为空文件/半截内容。
+ * fs.promises 无原子接口，这是标准最小实现。 */
+async function writeFileAtomic(filePath, data, encoding) {
+  const tmp = path.join(path.dirname(filePath), `.${path.basename(filePath)}.tmp-${process.pid}`);
+  try {
+    await fs.promises.writeFile(tmp, data, encoding);
+    await fs.promises.rename(tmp, filePath);
+  } catch (err) {
+    await fs.promises.rm(tmp, { force: true }).catch(() => { /* 清理尽力而为 */ });
+    throw err;
+  }
+}
+
+function writeFileAtomicSync(filePath, data, encoding) {
+  const tmp = path.join(path.dirname(filePath), `.${path.basename(filePath)}.tmp-${process.pid}`);
+  try {
+    fs.writeFileSync(tmp, data, encoding);
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* 清理尽力而为 */ }
+    throw err;
+  }
+}
+
 function saveWindowState(win) {
   try {
     const bounds = win.getNormalBounds();
@@ -44,7 +69,7 @@ function saveWindowState(win) {
       maximized: win.isMaximized()
     };
     fs.mkdirSync(path.dirname(windowStateFile()), { recursive: true });
-    fs.writeFileSync(windowStateFile(), JSON.stringify(state, null, 2), 'utf-8');
+    writeFileAtomicSync(windowStateFile(), JSON.stringify(state, null, 2), 'utf-8');
   } catch (err) {
     console.error('saveWindowState failed', err);
   }
@@ -97,6 +122,9 @@ function createWindow() {
     saveWindowState(win);
     if (!win.__studioDirty || win.__studioAllowClose) return;
     e.preventDefault();
+    // Fix 14：连续关闭（Ctrl+W 双击 / WM 与菜单叠加）不得叠加多个模态框
+    if (win.__studioClosePrompt) return;
+    win.__studioClosePrompt = true;
     dialog.showMessageBox(win, {
       type: 'warning',
       buttons: ['取消', '保存并关闭', '放弃变更'],
@@ -113,6 +141,8 @@ function createWindow() {
         win.close();
       }
       // response === 0（取消）：什么都不做，窗口保持打开
+    }).finally(() => {
+      win.__studioClosePrompt = false;
     });
   });
 
@@ -256,25 +286,45 @@ ipcMain.handle('dialog:open-diagram', async (event) => {
 });
 
 ipcMain.handle('dialog:save-diagram', async (event, payload) => {
-  const { content, defaultPath, forceAs } = payload || {};
+  const { content, defaultPath, forceAs, mode } = payload || {};
   const win = BrowserWindow.fromWebContents(event.sender);
+
+  // Fix 17：默认过滤器跟随当前编辑模式——DMN 模式的保存框不再把 .bpmn 顶在首位
+  const bpmnFilter = { name: 'BPMN 文件', extensions: ['bpmn'] };
+  const dmnFilter = { name: 'DMN 文件', extensions: ['dmn'] };
+  const xmlFilter = { name: 'XML 文件', extensions: ['xml'] };
 
   const result = await dialog.showSaveDialog(win, {
     title: forceAs ? '另存为' : '保存图表',
     defaultPath: defaultPath || 'diagram.bpmn',
-    filters: [
-      { name: 'BPMN 文件', extensions: ['bpmn'] },
-      { name: 'DMN 文件', extensions: ['dmn'] },
-      { name: 'XML 文件', extensions: ['xml'] }
-    ]
+    filters: mode === 'dmn' ? [dmnFilter, bpmnFilter, xmlFilter] : [bpmnFilter, dmnFilter, xmlFilter]
   });
 
   if (result.canceled || !result.filePath) return null;
 
   try {
-    await fs.promises.writeFile(result.filePath, content, 'utf-8');
+    await writeFileAtomic(result.filePath, content, 'utf-8');
     statAllowedPaths.add(result.filePath);
     return { path: result.filePath };
+  } catch (err) {
+    return { error: { code: err.code || 'UNKNOWN', syscall: err.syscall, message: err.message } };
+  }
+});
+
+// 已知路径直写保存（Fix 6）：渲染进程只能提交当前文件路径（均来自对话框往返），
+// 主进程按对话框信任集（与 file:stat 的 M11 白名单同一语义）校验后原子写。
+// 不允许任意路径直写，避免渲染进程被利用为任意文件写入原语。
+ipcMain.handle('dialog:save-diagram-direct', async (event, payload) => {
+  const { path: targetPath, content } = payload || {};
+  if (typeof content !== 'string') {
+    return { error: { code: 'EINVAL', message: '缺少文件内容' } };
+  }
+  if (typeof targetPath !== 'string' || !statAllowedPaths.has(targetPath)) {
+    return { error: { code: 'EACCES', message: '目标路径未经用户对话框确认，已拒绝直写' } };
+  }
+  try {
+    await writeFileAtomic(targetPath, content, 'utf-8');
+    return { path: targetPath };
   } catch (err) {
     return { error: { code: err.code || 'UNKNOWN', syscall: err.syscall, message: err.message } };
   }
@@ -300,10 +350,11 @@ ipcMain.handle('dialog:export-file', async (event, payload) => {
 
   try {
     if (buffer) {
-      await fs.promises.writeFile(result.filePath, Buffer.from(buffer));
+      await writeFileAtomic(result.filePath, Buffer.from(buffer));
     } else {
-      await fs.promises.writeFile(result.filePath, content || '');
+      await writeFileAtomic(result.filePath, content || '');
     }
+    statAllowedPaths.add(result.filePath);
     return { path: result.filePath };
   } catch (err) {
     return { error: { code: err.code || 'UNKNOWN', syscall: err.syscall, message: err.message } };
@@ -389,9 +440,13 @@ function loadPrefs() {
 function persistPrefs() {
   try {
     fs.mkdirSync(path.dirname(prefsFile()), { recursive: true });
-    fs.writeFileSync(prefsFile(), JSON.stringify(prefsCache, null, 2), 'utf-8');
+    writeFileAtomicSync(prefsFile(), JSON.stringify(prefsCache, null, 2), 'utf-8');
   } catch { /* disk errors are non-fatal for a preference store */ }
 }
+
+// prefs 键白名单（Fix 18，纵深防御）：存储虽在 userData，但未经校验的键可污染
+// 同一文件里未来的命名空间；新增可持久化设置时必须在这里登记
+const PREF_KEYS = new Set(['ui.theme', 'panel.collapsed']);
 
 ipcMain.handle('prefs:get', (_event, key) => {
   const prefs = loadPrefs();
@@ -399,6 +454,7 @@ ipcMain.handle('prefs:get', (_event, key) => {
 });
 
 ipcMain.handle('prefs:set', (_event, key, value) => {
+  if (typeof key !== 'string' || !PREF_KEYS.has(key)) return undefined;
   const prefs = loadPrefs();
   if (value === undefined || value === null) delete prefs[key];
   else prefs[key] = value;
