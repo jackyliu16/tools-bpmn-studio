@@ -3,6 +3,8 @@
 > 來源：v0.1.9 多維度代碼庫審計（2026-09-05，完整報告見 `AUDIT-REPORT.md`）。
 > Sprint 1（H1–H5 靜默資料丟失群）已於 **v0.1.10** 修復完畢。
 > 本檔案承載**其餘全部發現**，供後續迭代續作；完成任一項後請對應條目標記 `[x]` 並同步 AUDIT-REPORT.md。
+>
+> **當前 repo 狀態（2026-09-05 更新）**：`master` HEAD = `2f254ce`（v0.1.10 版號就緒），領先 `origin/master` 7 個 commit（c8ff457…2f254ce），均未推送。發版動作 = `git push && git tag v0.1.10 && git push --tags`（tag 必須等於 v+package.json 版本號，推 tag 即觸發 CI 發布）。
 
 ## 驗證狀態（v0.1.10 已落地項，供上下文快速恢復）
 
@@ -11,7 +13,7 @@
 - H3：BPMN `selection.changed` 已守門 `element?.businessObject?.$type`
 - H4：`setDmnDiagram` 快照+`restorePreviousModel`+`rebaseDirtyAfterRestore`
 - H5：`confirmDiscardUnsaved()` 掛在 `createNewDiagram`/`createNewDmnDiagram`/`openDiagramContent`
-- 回歸防线：`scripts/verify/verify-dirty-guard.mjs`（17 項）+ `verify-zoom-dmn.mjs`（14 項）
+- 回歸防线：`scripts/verify/verify-dirty-guard.mjs`（17 項）+ `verify-zoom-dmn.mjs`（14 項）——2026-09-05 對 `release/master-dirty-20260905-100337` AppImage 實跑 **17/17 + 14/14 全過**（含 zoom/DMN 回歸零退化）
 - **手動遺留**（原生對話框無法自動化）：三按鈕點擊流、「保存并关闭」時另存對話框取消 → 視窗須保持打開、瀏覽器 beforeunload 提示
 
 ---
@@ -91,7 +93,7 @@ win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 ### L18 · 全域 Electron sandbox
 - `app.enableSandbox()`（`app.whenReady()` 前）。注意驗證既有 IPC 不受影響。
 
-### L3 / L10 / L12 / L14 / L15 / L5 / L6 / L7 / L8 / L9 / L11 / L17（小項清單）
+### L3 / L10 / L12 / L14 / L15 / L5 / L6 / L7 / L8 / L9（小項清單）
 - [ ] L3 視圖選單 checkbox 狀態永不回同步（需 IPC 回環或移除 checkbox 型態）
 - [ ] L10 匯出對話框 PNG/SVG 混在同一 `filters[]` 條目 → 拆分
 - [ ] L12 另存 `.xml` 副檔名未納入正則 `/\.(bpmn|dmn)$/i` → 加 `|xml`
@@ -101,8 +103,8 @@ win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 - [ ] L7 啟動 IIFE 內 `createNewDiagram()` 未 await（異步 IIFE 內補 await）
 - [ ] L8 `describeFsError` 缺 `EEXIST/EMFILE/ENFILE/ENAMETOOLONG` 映射
 - [ ] L9 `unhandledrejection` 回調內 `showError` 無 try/catch（自身拋錯會靜默吞掉）
-- [ ] L11 （報告 L 表其余小項，見 AUDIT-REPORT.md Sprint 4 表）
-- [ ] L17 （同上）
+
+> **關於 L11 / L17**：審計去重階段的最後兩項 low 級發現，其描述未被最終 AUDIT-REPORT.md 的修復計畫承接（報告修復表僅列 L1–L20 中的 18 項 L），原始細節在報告固化後已不可考（workflow 明細輸出未持久化，會話日誌亦無殘留）。如需窮盡 low 級掃描，重跑一次 `codebase-audit` 的 maintainability/security 維度即可覆蓋，勿憑推測補寫。
 
 ## Sprint 4（v0.2.0）— CI/衛生
 

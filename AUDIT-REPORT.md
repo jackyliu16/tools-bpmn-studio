@@ -29,7 +29,7 @@ The most critical cluster is **silent data loss** (H1–H5, FIO-001): a user who
 ## Remediation Plan — Sprint 1 (Data Loss Prevention) — ✅ 已完成于 v0.1.10
 
 > 落地差异：关闭拦截用 IPC 握手（window:dirty-state / save-then-close / close-ok）而非 executeJavaScript；
-> H5 用原生 confirm；导入收尾必须走 `setDirty(false)` 而非裸赋值（验证脚本拓出星号残留，commit 00b3780）。
+> H5 用原生 confirm；导入收尾必须走 `setDirty(false)` 而非裸赋值（验证脚本抓出星号残留，commit 00b3780）。
 > 回归防线：`scripts/verify/verify-dirty-guard.mjs`（17 项）。
 
 These five fixes eliminate all silent-data-loss vectors and together represent **≈ 3 hours** of work.
@@ -334,15 +334,17 @@ Impact│ M9  (5 min) │     │ M11 (15m)   │     │ L3  (30m)   │
 
 After applying fixes, verify:
 
-- [ ] Open `.bpmn` file → edit → title shows ★
-- [ ] Close window → "unsaved changes" dialog appears
-- [ ] Select element on canvas → no console error when `businessObject` is undefined
-- [ ] Switch to DMN → import invalid DMN XML → canvas shows previous diagram, not blank
-- [ ] Switch to DMN → toolbar undo/redo buttons work
-- [ ] Switch to DMN → export SVG produces valid SVG file
-- [ ] Edit XML in DMN mode → "Apply" gives appropriate error (not "缺少 \<BPMNDiagram\>")
-- [ ] `Ctrl+Shift+F` in browser → opens search (not zoom-fit), `Ctrl+Shift+S` → no export trigger
-- [ ] CI `build-linux` job: Electron download uses cache (check `electron` binary timestamp)
+> **v0.1.10 執行結果（2026-09-05）**：由 `scripts/verify/verify-dirty-guard.mjs`（17 項）與 `verify-zoom-dmn.mjs`（14 項）對 AppImage 實跑全過；未勾選項属 Sprint 2+（M1/M2/M4/M12/M13/M15）或原生對話框手動項。
+
+- [x] Open `.bpmn` file → edit → title shows ★（開檔與新建同走 `setBpmnDiagram` 基線播種，CDP 已验；選檔對話框本身手動）
+- [ ] Close window → "unsaved changes" dialog appears（IPC 握手鏈與橋接已自动化验证；原生三按鈕點擊流留人工，見 AUDIT-BACKLOG.md 手動遗留）
+- [x] Select element on canvas → no console error when `businessObject` is undefined（ghost-selection 注入已验）
+- [x] Switch to DMN → import invalid DMN XML → canvas shows previous diagram, not blank（無效 .dmn 拖放：錯誤卡 + 模型還原已验）
+- [ ] Switch to DMN → toolbar undo/redo buttons work（待 M2）
+- [ ] Switch to DMN → export SVG produces valid SVG file（待 M1；現狀必然 TypeError）
+- [ ] Edit XML in DMN mode → "Apply" gives appropriate error (not "缺少 \<BPMNDiagram\>")（待 M4）
+- [ ] `Ctrl+Shift+F` in browser → opens search (not zoom-fit), `Ctrl+Shift+S` → no export trigger（待 M12/M13）
+- [ ] CI `build-linux` job: Electron download uses cache (check `electron` binary timestamp)（待 M15）
 
 ---
 
