@@ -171,6 +171,7 @@ import lintConfig from './lint-config.js';
 
 // lint 规则 / 元素的中文文案（纯逻辑模块）
 import { ruleInfo, elementTypeLabel, lintCategoryLabel, categorySortWeight } from './lint-l10n.js';
+import docLinks from '../electron/doc-links.cjs';
 // 错误细节提取与文件系统错误分类（纯逻辑模块）
 import { extractParseLocation, excerptLines, describeFsError } from './error-detail.js';
 
@@ -2414,6 +2415,13 @@ function renderLint(issues) {
     docLink.target = '_blank';
     docLink.rel = 'noopener noreferrer';
     docLink.textContent = '规则文档';
+    // 规则文档链接：Electron 交给主进程白名单+探测+降级处理（不拦默认行为）；
+    // 浏览器版自行探测 —— 在线开新标签原始网址，离线弹本地打包文档。
+    docLink.addEventListener('click', (e) => {
+      if (window.bpmnStudio) return;
+      e.preventDefault();
+      openWebRuleDoc(rule, info.docUrl);
+    });
 
     li.append(badge, msg, chip, ruleName, docLink);
     li.addEventListener('click', () => locateLintIssue(id, issue));
@@ -2426,6 +2434,92 @@ function toggleLintPanel() {
   els.lintPanel.classList.toggle('hidden', !lintVisible);
   $('#btn-lint').classList.toggle('active', lintVisible);
   pushViewChecks();
+}
+
+// --- 规则文档：浏览器版在线/离线降级 --------------------------------------------------
+// Electron 版由主进程 setWindowOpenHandler 处理（electron/main.cjs openDocWithFallback），
+// 这里只服务纯浏览器形态：探测 github.com 连通性（CSP connect-src 已放行该域，2s 超时）
+// → 在线：新标签打开原始地址；离线：弹本地打包文档（相对 fetch，同源部署/本地解压均可用）。
+const DOC_PROBE_TIMEOUT_MS = 2000;
+// web 版探测端点：与 Electron 主进程同构（raw/api 域直连可达性通常优于 github.com）
+const DOC_PROBE_URLS = ['https://github.com', 'https://raw.githubusercontent.com', 'https://api.github.com'];
+const DOC_OPENED = new Set(); // 连续点击去重（缓冲期内重复点击不重复探测）
+
+/** 打开（或去重拒绝）一次 web 版规则文档访问 */
+async function openWebRuleDoc(rule, githubUrl) {
+  const key = rule;
+  if (DOC_OPENED.has(key)) return;
+  DOC_OPENED.add(key);
+  try {
+    let online = false;
+    try {
+      // no-cors：不读响应体，链路可用即视为在线（断网/DNS/代理失败会 reject）
+      const probes = DOC_PROBE_URLS.map(async (probeUrl) => {
+        try {
+          await fetch(probeUrl, { method: 'HEAD', mode: 'no-cors', signal: AbortSignal.timeout(DOC_PROBE_TIMEOUT_MS) });
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      const results = await Promise.all(probes);
+      online = results.some(Boolean);
+    } catch { /* offline */ }
+
+    if (online) {
+      window.open(githubUrl, '_blank', 'noopener');
+      return;
+    }
+    try {
+      const rel = docLinks.localDocRelPath(rule);
+      const res = await fetch(rel, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      showDocModal(docLinks.mdToHtml(await res.text()), `${rule} — 离线文档`);
+    } catch {
+      // 本地也没有 → 兑底新标签原始地址（浏览器自行提示网络错误）
+      window.open(githubUrl, '_blank', 'noopener');
+    }
+  } finally {
+    DOC_OPENED.delete(key);
+  }
+}
+
+/** 离线文档覆盖层（web 版）；Electron 走独立窗口不经此路径 */
+function showDocModal(html, title) {
+  let modal = document.getElementById('doc-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'doc-modal';
+    modal.style.cssText =
+      'display:none;position:fixed;inset:0;z-index:10000;';
+    modal.innerHTML =
+      '<div class="doc-modal-backdrop" style="position:absolute;inset:0;background:rgba(0,0,0,.45)"></div>' +
+      '<div class="doc-modal-panel" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);' +
+      'width:min(860px,92vw);max-height:82vh;display:flex;flex-direction:column;background:var(--bg,#fff);' +
+      'border:1px solid var(--border,#d0d7de);border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.3);overflow:hidden">' +
+      '<div class="doc-modal-header" style="display:flex;align-items:center;gap:10px;padding:10px 14px;' +
+      'border-bottom:1px solid var(--border,#d0d7de)">' +
+      '<span class="doc-modal-title" style="font-weight:600;font-size:14px;flex:1;overflow:hidden;' +
+      'white-space:nowrap;text-overflow:ellipsis"></span>' +
+      '<button type="button" class="doc-modal-close tool" title="关闭 (Esc)">×</button></div>' +
+      '<div class="doc-modal-body" style="padding:14px 20px 24px;overflow-y:auto;font-size:13px;line-height:1.6"></div></div>';
+    document.body.appendChild(modal);
+    modal.querySelector('.doc-modal-close').addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+    modal.querySelector('.doc-modal-backdrop').addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+  }
+  modal.querySelector('.doc-modal-title').textContent = title;
+  const body = modal.querySelector('.doc-modal-body');
+  body.innerHTML = html;
+  modal.style.display = 'block';
+  // code 块横向滚动不撑破面板
+  body.querySelectorAll('pre').forEach((pre) => {
+    pre.style.cssText = 'overflow-x:auto;background:#f6f8fa;border:1px solid #d8dee4;' +
+      'border-radius:6px;padding:10px 12px;font-size:12px;'; // 深色主题背景跟随主题变量
+  });
 }
 
 // --- token simulation ---------------------------------------------------------------
@@ -2594,6 +2688,10 @@ document.addEventListener('keydown', (e) => {
   if (!els.errorOverlay.classList.contains('hidden')) hideError();
   else if (!els.infoModal.classList.contains('hidden')) hideInfoModal();
   else if (!els.noticeBar.classList.contains('hidden')) hideNotice();
+  else {
+    const docModal = document.getElementById('doc-modal');
+    if (docModal && docModal.style.display !== 'none') docModal.style.display = 'none';
+  }
 });
 
 // --- diagnostics (copy-to-clipboard) -------------------------------------------

@@ -272,6 +272,13 @@ build_web_assets() {
   [[ -d dist ]] || die "构建失败：dist/ 目录不存在"
   [[ -f dist/index.html ]] || die "构建失败：dist/index.html 不存在"
 
+  # ── Step 2.5: 拉取规则文档（构建时最新，随包供离线降级阅读）──
+  # 失败不阻断发布（在线链接仍是最终回退），仅告警。
+  step "Step 2.5: 拉取规则文档 (fetch-rule-docs)"
+  if ! node scripts/fetch-rule-docs.mjs; then
+    warn "规则文档拉取失败 — 离线环境「规则文档」将回退在线链接"
+  fi
+
   # ── Step 3: 拷贝 Web 产物 ──
   step "Step 3/3: 收集产物"
   info "拷贝 dist/ → $RELEASE_DIR/web/"

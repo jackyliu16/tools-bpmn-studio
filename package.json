@@ -15,7 +15,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "npm run lint:pack && npm run lint:js && vite build",
+    "build": "npm run lint:pack && npm run lint:js && vite build && node scripts/fetch-rule-docs.mjs",
     "preview": "vite preview",
     "serve": "vite preview --host --port 4173",
     "electron:dev": "npm run build && electron .",
@@ -68,6 +68,7 @@
       "dist/**/*",
       "electron/main.cjs",
       "electron/preload.cjs",
+      "electron/doc-links.cjs",
       "package.json"
     ],
     "linux": {

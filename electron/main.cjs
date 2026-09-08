@@ -5,9 +5,11 @@
  * dialogs. The heavy lifting (bpmn-js modeler UI) lives entirely in the
  * bundled renderer (dist/index.html).
  */
-const { app, BrowserWindow, Menu, dialog, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, screen, shell, net } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+
+const docLinks = require('./doc-links.cjs');
 
 const isDev = !app.isPackaged;
 
@@ -112,9 +114,18 @@ function createWindow() {
     win.maximize();
   }
 
-  // 导航守卫（M10）：应用内容完全本地，任何偏离本页的导航/开窗都是非预期行为
+  // 导航守卫（M10）：应用内容完全本地，任何偏离本页的导航/开窗都是非预期行为。
+  // 「规则文档」外链例外：只放行 doc-links 白名单（bpmnlint / camunda 文档 URL）
+  // —— 先探测连通性：在线 → 系统浏览器打开原始地址；离线 → 打开构建时打包的
+  // 本地文档（dist/docs/，见 scripts/fetch-rule-docs.mjs）。其它一切仍 deny。
   win.webContents.on('will-navigate', (e) => e.preventDefault());
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (docLinks.isAllowedGithubDocUrl(url)) {
+      openDocWithFallback(url);
+      return { action: 'deny' };
+    }
+    return { action: 'deny' };
+  });
 
   // 未保存变更关窗守护（v0.1.10）：渲染进程通过 window:dirty-state 推送脏标记；
   // 脏且未放行时拦截关闭，弹三选框（取消/保存并关闭/放弃变更）。
@@ -155,6 +166,159 @@ function createWindow() {
 function sendToFocused(action) {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
   if (win) win.webContents.send('menu:action', action);
+}
+
+// ── 规则文档：在线 / 离线降级（2026-09-08）──────────────────────────────
+// 点击 lint 面板里的「规则文档」（白名单外链）时：
+//  1) 在线（探测 github.com 可达）→ shell.openExternal 交给系统浏览器打开原始地址；
+//  2) 离线 → 打开构建时打包进应用的本地文档（dist/docs/，最新版随构建拉取）；
+//  3) 本地文档也不存在（构建时未拉取）→ 回退交给系统浏览器（显示网络错误，行为同旧版）。
+// 探测用 Electron net 模块（Chromium 网络栈，遵循系统代理），2.5s 超时；
+// 内网/断网时 DNS 失败立即抛出 → 降级近乎瞬时。
+const DOC_PROBE_TIMEOUT_MS = 2500;
+const docOpenInflight = new Set(); // 连续点击同 URL 去重
+
+function docsRootDir() {
+  return path.join(app.getAppPath(), 'dist', 'docs');
+}
+
+/** dist/docs 下相对路径 → 绝对路径（防目录穿越；不存在返回 null） */
+function resolveLocalDoc(rel) {
+  if (typeof rel !== 'string' || !rel) return null;
+  const root = docsRootDir();
+  const p = path.join(root, rel);
+  if (p !== root && !p.startsWith(root + path.sep)) return null;
+  return fs.existsSync(p) ? p : null;
+}
+
+// 探测端点：raw/api 域直连可达性通常优于 github.com 主页（例如本仓库构建机：
+// shell 层代理仅覆盖 curl，undici/Chromium 直连 github.com 超时，但 raw 域可达）。
+// 多端点并行竞速，任一可达即判定在线，避免单端点误判。
+const DOC_PROBE_URLS = [
+  'https://github.com',
+  'https://raw.githubusercontent.com',
+  'https://api.github.com'
+];
+
+// 直连探测用 Node https.request（原生模块，不经 Chromium 网络栈、不读 shell 代理 env）——
+// 实证 Electron 主进程全局 fetch 也被替换为 Chromium 栈，双栈同源会导致代理/直连混淆。
+const { request: httpsRequest } = require('node:https');
+
+function probeDirect(urlStr, timeoutMs) {
+  return new Promise((resolve) => {
+    let u;
+    try {
+      u = new URL(urlStr);
+    } catch {
+      return resolve(false);
+    }
+    const req = httpsRequest(
+      { hostname: u.hostname, path: u.pathname + u.search, method: 'HEAD', timeout: timeoutMs },
+      (res) => {
+        res.resume();
+        // 4xx/5xx 说明服务器已响应（链路通，只是路径不存在），同样不算离线
+        resolve(res.statusCode >= 200 && res.statusCode < 500);
+      }
+    );
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.on('error', () => resolve(false));
+    req.end();
+  });
+}
+
+async function canReachGithub() {
+  // BPMN_STUDIO_OFFLINE=1：测试钩子，强制走离线降级分支（verify-doc-offline E2E 用）；
+  // 与 BPMN_STUDIO_DEBUG=1 同一模式，不影响正常行为。
+  if (process.env.BPMN_STUDIO_OFFLINE === '1') return false;
+  const results = await Promise.all(
+    DOC_PROBE_URLS.map(async (probeUrl) => {
+      // 双通道：net.fetch（Chromium 栈，遵循系统代理设置）∪ https.request（原生直连）。
+      // 单一通道会误判：纯代理环境靠 net；代理失效/直连环境靠 request
+      // （本构建机实测：shell 代理对 raw 域超时、原生直连可达——若只用 net 会误降级）。
+      const viaNet = net
+        .fetch(probeUrl, {
+          method: 'HEAD',
+          redirect: 'follow',
+          signal: AbortSignal.timeout(DOC_PROBE_TIMEOUT_MS)
+        })
+        .then((res) => res.ok)
+        .catch(() => false);
+      const [a, b] = await Promise.all([viaNet, probeDirect(probeUrl, DOC_PROBE_TIMEOUT_MS)]);
+      return a || b;
+    })
+  );
+  const online = results.some(Boolean);
+  if (!online) {
+    console.warn('规则文档网络探测全部失败 → 走离线降级（若本机可联网请检查代理/直连设置）', JSON.stringify(results));
+  }
+  return online;
+}
+
+/** 离线文档窗口：markdown → 内联 HTML（data: URL 加载，不依赖文件 MIME 推断） */
+function openLocalDocWindow(localPath, title) {
+  let html;
+  try {
+    html = docLinks.mdToHtml(fs.readFileSync(localPath, 'utf-8'));
+  } catch (err) {
+    console.warn('读取本地规则文档失败，保持关闭', localPath, err);
+    return;
+  }
+  const docWindow = new BrowserWindow({
+    width: 980,
+    height: 760,
+    title: `${title} — 离线文档`,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  // 文档窗口同样是本地内容：禁止逃逸导航；白名单外链仍走降级流
+  docWindow.webContents.on('will-navigate', (e) => e.preventDefault());
+  docWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (docLinks.isAllowedGithubDocUrl(url)) {
+      openDocWithFallback(url);
+      return { action: 'deny' };
+    }
+    return { action: 'deny' };
+  });
+  const style =
+    'body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:860px;' +
+    'margin:32px auto;padding:0 24px 64px;color:#1f2328;line-height:1.6;}' +
+    'h1{border-bottom:1px solid #d8dee4;padding-bottom:8px;font-size:1.6em;}' +
+    'h2{font-size:1.25em;margin-top:1.6em;}h3{font-size:1.08em;}' +
+    'pre{background:#f6f8fa;border:1px solid #d8dee4;border-radius:6px;padding:12px 14px;' +
+    'overflow-x:auto;font-size:13px;line-height:1.5;}' +
+    'code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}' +
+    'li{margin:4px 0;}em{color:#57606a;}';
+  const doc =
+    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">` +
+    `<title>${title.replace(/[<>&"]/g, '')} — 离线文档</title>` +
+    `<style>${style}</style></head><body>${html}</body></html>`;
+  docWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(doc)}`);
+}
+
+async function openDocWithFallback(url) {
+  if (docOpenInflight.has(url)) return;
+  docOpenInflight.add(url);
+  try {
+    const online = await canReachGithub();
+    if (online) {
+      shell.openExternal(url);
+      return;
+    }
+    const rel = docLinks.githubToLocalRel(url);
+    const localPath = rel ? resolveLocalDoc(rel) : null;
+    if (localPath) {
+      openLocalDocWindow(localPath, rel.replace(/\.[a-z]+$/i, ''));
+      return;
+    }
+    // 离线且本地无文档（理论只发生在漏跑构建阶段）→ 原行为：交给系统浏览器
+    shell.openExternal(url);
+  } finally {
+    docOpenInflight.delete(url);
+  }
 }
 
 // 视图复选框真实状态（L3）：渲染进程是唯一真相源（工具栏/快捷键/收纳轨道都能改），
