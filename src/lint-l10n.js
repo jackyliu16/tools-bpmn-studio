@@ -29,7 +29,7 @@ export const RULE_LABELS = {
   },
   'conditional-flows': {
     name: '条件分支出线缺少条件',
-    suggestion: '分叉元素（含条件出线的网关/活动）的每条出线要么是默认流，要么在属性面板中为其添加条件表达式。'
+    suggestion: '选中该出线，在属性面板「条件」分组填「条件表达式」；或将其中一条出线设为网关默认流（选中网关 → 「网关默认流」下拉）。'
   },
   'end-event-required': {
     name: '缺少结束事件',
@@ -131,7 +131,7 @@ export const RULE_LABELS = {
   },
   'camunda/forking-conditions': {
     name: '分叉网关出线缺少条件',
-    suggestion: '排他网关分叉（≥2 条出线）时，每条出线都要有条件表达式，或将其中一条设为默认流。'
+    suggestion: '排他网关分叉（≥2 条出线）时，每条出线都要有条件表达式（选中出线 → 属性面板「条件」分组），或将其中一条设为默认流（选中网关 → 「网关默认流」下拉）。'
   },
   'camunda/implementation': {
     name: '缺少可执行实现配置',

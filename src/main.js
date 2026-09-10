@@ -53,6 +53,9 @@ import BpmnColorPickerModule from 'bpmn-js-color-picker';
 import BpmnLintModule from 'bpmn-js-bpmnlint';
 import TokenSimulationModule from 'bpmn-js-token-simulation';
 
+// 控制要素模块：中文标签覆盖 + 「网关默认流」provider + 默认流引用清理
+import { controlModule, cleanupDanglingDefaultFlows } from './control/index.js';
+
 // package versions (reported by the diagnostics clipboard payload)
 import bpmnJsPkg from 'bpmn-js/package.json';
 import bpmnJsBpmnlintPkg from 'bpmn-js-bpmnlint/package.json';
@@ -226,13 +229,16 @@ const PLATFORMS = {
     label: 'Camunda Platform 7'
   },
   'camunda-8': {
-    moddleExtensions: { zeebe: zeebeModdle },
+    // zeebe 为主扩展；同时挂 camunda，兼容混合命名空间文件
+    moddleExtensions: { zeebe: zeebeModdle, camunda: camundaModdle },
     providers: [ZeebePropertiesProviderModule],
     label: 'Camunda 8 (Zeebe)'
   },
   bpmn: {
-    moddleExtensions: {},
-    providers: [],
+    // 默认提供 Camunda 平台字段集（控制要素）：挂 camunda moddle + full provider，
+    // 纯 BPMN 文件也可写 camunda:x 属性并完整往返序列化
+    moddleExtensions: { camunda: camundaModdle },
+    providers: [CamundaPlatformPropertiesProviderModule],
     label: 'BPMN 2.0'
   }
 };
@@ -566,6 +572,7 @@ function createModeler(platform) {
       BpmnPropertiesPanelModule,
       BpmnPropertiesProviderModule,
       ...cfg.providers,
+      controlModule,
       MinimapModule,
       BpmnColorPickerModule,
       BpmnLintModule,
@@ -2212,6 +2219,8 @@ function bindModelerEvents(modeler) {
     // Rebuild back-references right after parsing — before the first lint
     // pass (linting listens to import.done, which fires later).
     rebuildFlowNodeBackrefs(event.definitions);
+    // 管理逻辑：清除网关 default 指向已删除出线的悬空引用
+    cleanupDanglingDefaultFlows(modeler);
   });
 
   modeler.on('elements.changed', debounce(() => {
@@ -2220,6 +2229,8 @@ function bindModelerEvents(modeler) {
     // elements.changed 覆盖拖拽帧级元素更新，而重建是整树递归 + 数组重分配，
     // 因此节流合并；lint 为异步调度，重建先于其触达（scripts/verify/check-backref-fix.mjs 守门）。
     rebuildFlowNodeBackrefs(modeler.getDefinitions());
+    // 结构变更后同样清理悬空默认流（幂等：无悬空引用时零操作）
+    cleanupDanglingDefaultFlows(modeler);
   }, 80));
 
   modeler.on('linting.completed', (event) => {
