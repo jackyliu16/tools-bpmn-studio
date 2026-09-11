@@ -54,7 +54,8 @@ import BpmnLintModule from 'bpmn-js-bpmnlint';
 import TokenSimulationModule from 'bpmn-js-token-simulation';
 
 // 控制要素模块：中文标签覆盖 + 「网关默认流」provider + 默认流引用清理
-import { controlModule, cleanupDanglingDefaultFlows } from './control/index.js';
+import { controlModule, studioControlModule, studioModdle, cleanupDanglingDefaultFlows } from './control/index.js';
+import { runStudioChecks, regenerateCamundaMapping, modelViewFromModeler } from './control/index.js';
 
 // package versions (reported by the diagnostics clipboard payload)
 import bpmnJsPkg from 'bpmn-js/package.json';
@@ -195,6 +196,9 @@ const els = {
   lintPanel: $('#lint-panel'),
   lintList: $('#lint-list'),
   lintSummary: $('#lint-summary'),
+  studioCheckPanel: $('#studio-check-panel'),
+  studioCheckList: $('#studio-check-list'),
+  studioCheckSummary: $('#studio-check-summary'),
   fileInput: $('#file-input'),
   canvas: $('#js-canvas'),
   propertiesPanel: $('#js-properties-panel'),
@@ -222,22 +226,23 @@ const els = {
 };
 
 // --- per-platform configuration ----------------------------------------------
+// moddleExtensions 三平台均挂 studio（B2 参数 schema）与 camunda（默认字段 + 混合文件解析）
 const PLATFORMS = {
   'camunda-7': {
-    moddleExtensions: { camunda: camundaModdle },
+    moddleExtensions: { camunda: camundaModdle, studio: studioModdle },
     providers: [CamundaPlatformPropertiesProviderModule],
     label: 'Camunda Platform 7'
   },
   'camunda-8': {
-    // zeebe 为主扩展；同时挂 camunda，兼容混合命名空间文件
-    moddleExtensions: { zeebe: zeebeModdle, camunda: camundaModdle },
+    // zeebe 为主扩展；同时挂 camunda + studio，兼容混合命名空间文件
+    moddleExtensions: { zeebe: zeebeModdle, camunda: camundaModdle, studio: studioModdle },
     providers: [ZeebePropertiesProviderModule],
     label: 'Camunda 8 (Zeebe)'
   },
   bpmn: {
     // 默认提供 Camunda 平台字段集（控制要素）：挂 camunda moddle + full provider，
     // 纯 BPMN 文件也可写 camunda:x 属性并完整往返序列化
-    moddleExtensions: { camunda: camundaModdle },
+    moddleExtensions: { camunda: camundaModdle, studio: studioModdle },
     providers: [CamundaPlatformPropertiesProviderModule],
     label: 'BPMN 2.0'
   }
@@ -258,6 +263,7 @@ let lastSavedXML = null;
 let lastSavedAt = null;
 let isDirty = false;
 let lintVisible = false; // 初始与 #lint-panel.hidden 一致（旧值 true 会让首击无效——面板本就隐藏）
+let studioCheckVisible = false; // 参数检查面板（B2 studio 体系）
 let simulateMode = false;
 let xmlVisible = false;
 let xmlEditing = false;
@@ -573,6 +579,7 @@ function createModeler(platform) {
       BpmnPropertiesProviderModule,
       ...cfg.providers,
       controlModule,
+      studioControlModule,
       MinimapModule,
       BpmnColorPickerModule,
       BpmnLintModule,
@@ -603,11 +610,15 @@ function destroyModeler() {
   }
   els.canvas.innerHTML = '';
   els.propertiesPanel.innerHTML = '';
-  // 切换/关闭图表时清掉 lint 面板残留（M14）：旧图的结果不得出现在新图/DMN 里
+  // 切换/关闭图表时清掉 lint/参数检查面板残留（M14）：旧图的结果不得出现在新图/DMN 里
   els.lintList.innerHTML = '';
   lintVisible = false;
   els.lintPanel.classList.add('hidden');
   $('#btn-lint').classList.remove('active');
+  els.studioCheckList.innerHTML = '';
+  studioCheckVisible = false;
+  els.studioCheckPanel.classList.add('hidden');
+  $('#btn-studio-check').classList.remove('active');
   pushViewChecks();
   simulateMode = false;
   $('#btn-simulate').textContent = '▶ 模拟';
@@ -2257,6 +2268,11 @@ function bindModelerEvents(modeler) {
 
   modeler.on('commandStack.changed', onBpmnStackChanged);
   modeler.on('commandStack.changed', debouncedXmlRefresh);
+  // B2 studio：结构/参数变更后刷新参数检查（面板数据随时新鲜，打开即最新）
+  modeler.on('commandStack.changed', debounce(() => {
+    if (bpmnModeler !== modeler) return;
+    runStudioCheck();
+  }, 300));
 }
 
 // --- lint ---------------------------------------------------------------------------
@@ -2447,6 +2463,84 @@ function toggleLintPanel() {
   pushViewChecks();
 }
 
+// --- 参数检查面板（B2 studio 体系：等价性 / 引用完整性） ---------------------------
+const STUDIO_CHECK_ORDER = { error: 0, warn: 1, info: 2 };
+
+function runStudioCheck() {
+  if (!bpmnModeler) return;
+  try {
+    const issues = runStudioChecks(modelViewFromModeler(bpmnModeler));
+    renderStudioCheck(issues);
+  } catch (err) {
+    // 检查失败不阻塞建模（诊断通道留痕）
+    console.warn('studio check failed', err);
+  }
+}
+
+function renderStudioCheck(issues) {
+  issues = [...issues].sort(
+    (a, b) => (STUDIO_CHECK_ORDER[a.category] ?? 2) - (STUDIO_CHECK_ORDER[b.category] ?? 2) ||
+      String(a.rule).localeCompare(String(b.rule))
+  );
+
+  const errors = issues.filter((i) => i.category === 'error').length;
+  const warns = issues.filter((i) => i.category === 'warn').length;
+  const infos = issues.filter((i) => i.category === 'info').length;
+  els.studioCheckSummary.textContent = issues.length
+    ? `${issues.length} 个问题（${errors} 错误 / ${warns} 警告 / ${infos} 提示）`
+    : '参数/路由一致 ✓';
+
+  els.studioCheckList.innerHTML = '';
+  for (const issue of issues) {
+    const li = document.createElement('li');
+    li.className = 'lint-issue';
+    li.dataset.rule = issue.rule;
+    li.dataset.id = issue.elementId;
+    li.title = issue.message;
+
+    const badge = document.createElement('span');
+    badge.className = `lint-badge ${issue.category || 'warn'}`;
+    badge.textContent = lintCategoryLabel(issue.category);
+
+    const rule = document.createElement('span');
+    rule.className = 'lint-rule';
+    rule.textContent = issue.rule;
+
+    const msg = document.createElement('span');
+    msg.className = 'lint-message';
+    msg.textContent = issue.message;
+
+    li.append(badge, rule, msg);
+
+    if (issue.fixable) {
+      const fix = document.createElement('button');
+      fix.type = 'button';
+      fix.className = 'studio-fix-btn';
+      fix.textContent = '重新生成';
+      fix.addEventListener('click', (e) => {
+        e.stopPropagation();
+        regenerateCamundaMapping(bpmnModeler, issue.elementId);
+        setTimeout(runStudioCheck, 150);
+      });
+      li.appendChild(fix);
+    }
+
+    li.addEventListener('click', () => {
+      if (issue.fixable) return;
+      locateLintIssue(issue.elementId, {});
+    });
+    els.studioCheckList.appendChild(li);
+  }
+}
+
+function toggleStudioCheckPanel() {
+  studioCheckVisible = !studioCheckVisible;
+  els.studioCheckPanel.classList.toggle('hidden', !studioCheckVisible);
+  $('#btn-studio-check').classList.toggle('active', studioCheckVisible);
+  if (studioCheckVisible) runStudioCheck();
+  pushViewChecks();
+}
+
 // --- 规则文档：浏览器版在线/离线降级 --------------------------------------------------
 // Electron 版由主进程 setWindowOpenHandler 处理（electron/main.cjs openDocWithFallback），
 // 这里只服务纯浏览器形态：探测 github.com 连通性（CSP connect-src 已放行该域，2s 超时）
@@ -2575,6 +2669,7 @@ function pushViewChecks() {
     studio.setViewChecks({
       minimap: !!(bpmnModeler && bpmnModeler.get('minimap') && bpmnModeler.get('minimap').isOpen()),
       lint: !els.lintPanel.classList.contains('hidden'),
+      studioCheck: !els.studioCheckPanel.classList.contains('hidden'),
       properties: !els.panelRegion.classList.contains('collapsed')
     });
   } catch { /* 菜单同步属非关键路径，不得影响交互本身 */ }
@@ -2644,6 +2739,8 @@ $('#btn-minimap').addEventListener('click', toggleMinimap);
 $('#btn-simulate').addEventListener('click', toggleSimulation);
 $('#btn-lint').addEventListener('click', toggleLintPanel);
 $('#btn-lint-close').addEventListener('click', toggleLintPanel);
+$('#btn-studio-check').addEventListener('click', toggleStudioCheckPanel);
+$('#btn-studio-check-close').addEventListener('click', toggleStudioCheckPanel);
 $('#btn-info').addEventListener('click', openMetadataDialog);
 $('#btn-xml').addEventListener('click', toggleXmlView);
 $('#btn-xml-copy').addEventListener('click', copyXml);
@@ -3052,6 +3149,7 @@ if (studio) {
       case 'zoom-fit': return zoomFit();
       case 'toggle-minimap': return toggleMinimap();
       case 'toggle-lint': return toggleLintPanel();
+      case 'toggle-studio-check': return toggleStudioCheckPanel();
       case 'toggle-properties': return togglePropertiesPanel();
       case 'toggle-simulate': return toggleSimulation();
       case 'search': return openSearch();
