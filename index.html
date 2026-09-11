@@ -55,6 +55,7 @@
       <div class="group mode">
         <button id="btn-simulate" class="tool" title="开始/停止 令牌模拟">▶ 模拟</button>
         <button id="btn-lint" class="tool" title="切换模型校验面板">✔ 校验</button>
+        <button id="btn-studio-check" class="tool" title="参数检查：路由条件引用 / 类型 / Camunda 映射漂移 / 出参消费（B2 studio）">⚙ 参数</button>
         <button id="btn-diagnostic" class="tool" title="复制全部诊断信息到剪贴板（元素注册表 + 校验问题 + 导入警告），可直接粘贴给 AI 分析">📋 诊断</button>
         <span class="sep"></span>
         <button id="btn-theme" class="tool" title="切换浅色/深色主题 (Ctrl+Shift+D)">🌙</button>
@@ -83,6 +84,15 @@
         <button id="btn-lint-close" class="tool" title="关闭">×</button>
       </div>
       <ul id="lint-list"></ul>
+    </div>
+
+    <div id="studio-check-panel" class="hidden">
+      <div class="lint-header">
+        <span>参数检查 (studio)</span>
+        <span id="studio-check-summary"></span>
+        <button id="btn-studio-check-close" class="tool" title="关闭">×</button>
+      </div>
+      <ul id="studio-check-list"></ul>
     </div>
 
     <div id="xml-panel" class="hidden">

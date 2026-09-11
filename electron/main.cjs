@@ -323,7 +323,7 @@ async function openDocWithFallback(url) {
 
 // 视图复选框真实状态（L3）：渲染进程是唯一真相源（工具栏/快捷键/收纳轨道都能改），
 // 菜单项初始 checked 只是占位；启动后由渲染进程 pushViewChecks 推平并经重建菜单回同步。
-const viewChecks = { minimap: true, lint: false, properties: true };
+const viewChecks = { minimap: true, lint: false, studioCheck: false, properties: true };
 
 function buildMenu() {
   const template = [
@@ -375,6 +375,12 @@ function buildMenu() {
           type: 'checkbox',
           checked: viewChecks.lint,
           click: () => sendToFocused('toggle-lint')
+        },
+        {
+          label: '参数检查面板',
+          type: 'checkbox',
+          checked: viewChecks.studioCheck,
+          click: () => sendToFocused('toggle-studio-check')
         },
         {
           label: '属性面板（右侧）',
@@ -541,7 +547,7 @@ ipcMain.on('view:set-checks', (_event, checks) => {
   // 渲染进程推送视图面板真实勾选态 → 仅变化时重建菜单（L3），避免无谓的菜单闪烁
   if (!checks || typeof checks !== 'object') return;
   let changed = false;
-  for (const key of ['minimap', 'lint', 'properties']) {
+  for (const key of ['minimap', 'lint', 'studioCheck', 'properties']) {
     if (typeof checks[key] === 'boolean' && checks[key] !== viewChecks[key]) {
       viewChecks[key] = checks[key];
       changed = true;

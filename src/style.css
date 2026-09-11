@@ -972,6 +972,12 @@ html[data-theme="dark"] .meta-stats .stat .lbl {
 @media (max-width: 1240px) {
   #topbar .brand { display: none; }
 }
+@media (max-width: 1300px) {
+  /* ⚙参数（B2 studio）隐藏：含 brand/新建按钮全量可见时需 ≥1305px；
+     1280px 常见窗宽下放菜单兜底（见 electron/main.cjs「参数检查」），
+     其余分级断点（≤1240/≤1160/≤980/≤820）保持原校准不变。 */
+  #topbar #btn-studio-check { display: none; }
+}
 @media (max-width: 1160px) {
   #topbar .tool { padding: 4px 7px; font-size: 12px; }
   #topbar #btn-new,
@@ -996,4 +1002,53 @@ html[data-theme="dark"] .meta-stats .stat .lbl {
     padding-top: 4px;
     padding-bottom: 4px;
   }
+}
+/* ---------- studio 参数检查面板（复用 lint 视觉语言）+ 变量 chips / 边徽标（B2） ---------- */
+#studio-check-panel { flex: 0 0 auto; max-height: 160px; overflow-y: auto; border-top: 1px solid var(--border); background: var(--lint-bg); }
+#studio-check-panel .lint-header {
+  display: flex; align-items: center; gap: 10px; padding: 6px 12px;
+  background: var(--lint-header-bg); border-bottom: 1px solid var(--lint-header-border);
+  font-size: 13px; font-weight: 600; position: sticky; top: 0;
+}
+#studio-check-panel .lint-header #studio-check-summary { font-weight: 400; color: var(--lint-summary-color); }
+#studio-check-panel .lint-header .tool { margin-left: auto; padding: 2px 8px; }
+#studio-check-list { margin: 0; padding: 6px 12px; font-size: 13px; }
+#studio-check-list li { margin: 2px 0; }
+
+#studio-check-list .lint-issue {
+  display: flex; align-items: flex-start; flex-wrap: wrap; gap: 4px 8px;
+  padding: 5px 8px; margin: 2px 0; border-radius: 6px;
+  background: var(--surface); border: 1px solid var(--border); cursor: pointer;
+  list-style: none;
+}
+#studio-check-list .lint-issue:hover { background: var(--surface-hover); border-color: var(--accent); }
+#studio-check-list .lint-badge {
+  flex: 0 0 auto; font-size: 11px; font-weight: 700; line-height: 1;
+  padding: 3px 7px; border-radius: 10px; letter-spacing: 0.5px;
+}
+#studio-check-list .lint-badge.error { background: var(--badge-error-bg); color: var(--badge-error-color); }
+#studio-check-list .lint-badge.warn { background: var(--badge-warn-bg); color: var(--badge-warn-color); }
+#studio-check-list .lint-badge.info { background: var(--badge-info-bg); color: var(--badge-info-color); }
+#studio-check-list .lint-message { flex: 1 1 220px; min-width: 220px; word-break: break-word; }
+#studio-check-list .lint-rule { flex: 0 0 auto; font-size: 12px; color: var(--text-secondary); }
+
+.studio-fix-btn {
+  flex: 0 0 auto; margin-left: auto; border: 1px solid var(--accent); color: var(--accent);
+  background: transparent; border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer;
+}
+.studio-fix-btn:hover { background: var(--surface-hover); }
+
+.studio-note { font-size: 12px; color: var(--text-secondary); line-height: 1.5; padding: 2px 0 6px; }
+.studio-var-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 6px; }
+.studio-var-chip {
+  border: 1px solid var(--border); background: var(--chip-bg); color: var(--chip-color);
+  border-radius: 10px; padding: 2px 9px; font-size: 12px; cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+}
+.studio-var-chip:hover { border-color: var(--accent); }
+.studio-flow-badge {
+  position: relative; z-index: 3; background: var(--accent); color: #fff;
+  font-size: 10px; line-height: 1.6; padding: 1px 6px; border-radius: 8px;
+  white-space: nowrap; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+  pointer-events: none; opacity: 0.92;
 }
