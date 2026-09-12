@@ -23,6 +23,7 @@ import {
   formatLintIssues,
   modelIntegrityProblems
 } from '../../src/diagnostics.js';
+import { basename } from '../../src/io/file-io.js';
 import { createTester } from '../lib/testkit.mjs';
 
 const require = createRequire(import.meta.url);
@@ -285,6 +286,14 @@ const { check, finish } = createTester();
   delete labelNoDi.di;
   check('diagnostics.modelIntegrityProblems: DI-label 缺 DI 不报告',
     modelIntegrityProblems([labelNoDi], () => ({}), isLabel).length === 0);
+}
+
+// ── src/io/file-io.js :: 纯函数 ────────────────────────────────────────────────
+{
+  check('fileIO.basename: POSIX 路径', basename('/home/u/diagram.bpmn') === 'diagram.bpmn');
+  check('fileIO.basename: Windows 路径', basename('C:\\Users\\u\\diagram.dmn') === 'diagram.dmn');
+  check('fileIO.basename: 无分隔符时原样返回', basename('diagram.bpmn') === 'diagram.bpmn');
+  check('fileIO.basename: 混合分隔符取末段', basename('a/b\\c.xml') === 'c.xml');
 }
 
 process.exit(finish('unit-render-units checks'));

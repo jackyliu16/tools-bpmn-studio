@@ -63,6 +63,9 @@ import { createXmlView } from './ui/xml-view.js';
 // 元数据弹窗（文件/文档/统计）—— 从本文件抽出的 M3 视图模块
 import { createMetadataDialog } from './ui/metadata-dialog.js';
 
+// 文件打开/保存/导出/拖放 —— 从本文件抽出的 M1 模块
+import { createFileIO } from './io/file-io.js';
+
 // 诊断信息剪贴板载荷 —— 从本文件抽出的 M4 模块
 import { createDiagnostics } from './diagnostics.js';
 
@@ -1309,192 +1312,26 @@ function openDiagramContent(xml, name, filePath) { return guarded(() => openDiag
 // 旧代码绕过 guarded，连打 Ctrl+Enter/叠加拖放打开会把两份内容交叠进同一画布
 function applyXmlEdits() { return guarded(applyXmlEditsInner); }
 
-// --- file open / save ---------------------------------------------------------
-async function openFile() {
-  if (studio) {
-    // 对话框/读文件异常也给带上下文的错误卡（M7），不留给全局兑底
-    let result;
-    try {
-      result = await studio.openDiagram();
-    } catch (err) {
-      console.error(err);
-      showError({ title: '读取文件失败', message: err.message || String(err), error: err });
-      return;
-    }
-    if (!result) return;
-    if (result.error) {
-      showFsError(result);
-      return;
-    }
-    await openDiagramContent(result.content, basename(result.path), result.path);
-  } else {
-    els.fileInput.value = '';
-    els.fileInput.click();
-  }
-}
-
-function basename(p) {
-  return String(p).split(/[\\/]/).pop();
-}
-
-/**
- * 保存当前图表。返回值表示是否真正完成保存（v0.1.10 关窗守护需要据此决定是否放行关闭）：
- * true = 已写入并 markSaved；false = 取消对话框/失败。
- */
-async function saveFile(forceAs = false) {
-  // Fix 2：保存要序列化当前模型；导入/重建进行中读到半新半旧的内容会写出脏文件
-  if (_modelBusy) {
-    setStatus('上一个操作仍在处理中，请稍候…');
-    return false;
-  }
-  let xml;
-  try {
-    xml = await saveActiveXml();
-    if (xml === null) return false;
-  } catch (err) {
-    console.error(err);
-    showError({ title: '导出 XML 失败', message: err.message || String(err), error: err });
-    return false;
-  }
-
-  const mime = editorMode === 'dmn' ? 'application/dmn+xml' : 'application/bpmn20-xml';
-
-  try {
-    if (studio) {
-      // Fix 6：已有已知路径且非「另存为」→ 直写文件，不再每次弹另存对话框
-      //（与常规编辑器语义一致；也让关窗守护的「保存并关闭」不再二次弹框）
-      if (!forceAs && currentFilePath) {
-        const res = await studio.saveDiagramDirect({
-          path: currentFilePath,
-          content: xml,
-          mode: editorMode
-        });
-        if (!res) return false;
-        if (res.error) {
-          showFsError(res);
-          return false;
-        }
-        currentFilePath = res.path;
-        currentFileName = basename(res.path);
-        markSaved(xml);
-        setStatus('已保存: ' + currentFilePath);
-      } else {
-        // Fix 17：把当前模式告知主进程，过滤器默认项跟随模式（DMN 优先 .dmn）
-        const result = await studio.saveDiagram({
-          content: xml,
-          defaultPath: forceAs ? currentFileName : (currentFilePath || currentFileName),
-          forceAs,
-          mode: editorMode
-        });
-        if (!result) return false;
-        if (result.error) {
-          showFsError(result);
-          return false;
-        }
-        currentFilePath = result.path;
-        currentFileName = basename(result.path);
-        markSaved(xml);
-        setStatus('已保存: ' + currentFilePath);
-      }
-    } else {
-      downloadText(xml, currentFileName, mime);
-      markSaved(xml);
-    }
-  } catch (err) {
-    console.error(err);
-    showError({ title: '保存文件失败', message: err.message || String(err), error: err });
-    return false;
-  }
-  return true;
-}
-
-async function exportSVG() {
-  try {
-    const svg = await saveActiveSvg();
-    if (svg === null) return;
-    const baseName = currentFileName.replace(/\.(bpmn|dmn|xml)$/i, ''); // .xml 也算已知后缀（L12）
-    if (studio) {
-      const res = await studio.exportFile({ name: baseName + '.svg', content: svg });
-      if (res && res.error) {
-        showFsError(res);
-        return;
-      }
-    } else {
-      downloadText(svg, baseName + '.svg', 'image/svg+xml');
-    }
-    setStatus('已导出 SVG');
-  } catch (err) {
-    console.error(err);
-    showError({ title: '导出 SVG 失败', message: err.message || String(err), error: err });
-  }
-}
-
-async function exportPNG() {
-  try {
-    const svg = await saveActiveSvg();
-    if (svg === null) return;
-
-    const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(svgBlob);
-
-    // 解码/绘制的任一路径（含 img.onerror）都必须释放 Object URL（M8）
-    let pngBlob;
-    try {
-      const img = new Image();
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-        img.src = url;
-      });
-
-      const scale = 2;
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(img.width * scale));
-      canvas.height = Math.max(1, Math.round(img.height * scale));
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-
-    const baseName = currentFileName.replace(/\.(bpmn|dmn|xml)$/i, ''); // 同 L12
-    if (studio) {
-      const buffer = await pngBlob.arrayBuffer();
-      const res = await studio.exportFile({
-        name: baseName + '.png',
-        buffer
-      });
-      if (res && res.error) {
-        showFsError(res);
-        return;
-      }
-    } else {
-      downloadBlob(pngBlob, baseName + '.png');
-    }
-    setStatus('已导出 PNG');
-  } catch (err) {
-    console.error(err);
-    showError({ title: '导出 PNG 失败', message: err.message || String(err), error: err });
-  }
-}
-
-function downloadText(content, name, mime) {
-  downloadBlob(new Blob([content], { type: mime }), name);
-}
-
-function downloadBlob(blob, name) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
+// --- file IO (moved to src/io/file-io.js — M1) -------------------------------------
+// 打开/保存/导出与拖放入口都在模块内；打开成功后的模型切换仍由本文件的
+// openDiagramContent（经 guarded 串行化）负责，脏标记基线（markSaved）也仍由本文件持有。
+const fileIO = createFileIO({
+  els,
+  getBridge: () => studio,
+  isModelBusy: () => _modelBusy,
+  getMode: () => editorMode,
+  getFileName: () => currentFileName,
+  setFileName: (name) => { currentFileName = name; },
+  getFilePath: () => currentFilePath,
+  setFilePath: (path) => { currentFilePath = path; },
+  saveActiveXml,
+  saveActiveSvg,
+  markSaved,
+  setStatus,
+  showError,
+  showFsError,
+  openDiagramContent
+});
 
 /** 复制文本到剪贴板（navigator.clipboard → textarea + execCommand 兜底） */
 async function copyTextToClipboard(text) {
@@ -2247,10 +2084,10 @@ function openSearch() {
 $('#panel-collapse-btn').addEventListener('click', togglePropertiesPanel);
 $('#btn-new').addEventListener('click', createNewDiagram);
 $('#btn-new-dmn').addEventListener('click', createNewDmnDiagram);
-$('#btn-open').addEventListener('click', openFile);
-$('#btn-save').addEventListener('click', () => saveFile(false));
-$('#btn-export-svg').addEventListener('click', exportSVG);
-$('#btn-export-png').addEventListener('click', exportPNG);
+$('#btn-open').addEventListener('click', fileIO.openFile);
+$('#btn-save').addEventListener('click', () => fileIO.saveFile(false));
+$('#btn-export-svg').addEventListener('click', fileIO.exportSVG);
+$('#btn-export-png').addEventListener('click', fileIO.exportPNG);
 $('#btn-undo').addEventListener('click', () => { const cs = undoStack(); if (cs) cs.undo(); });
 $('#btn-redo').addEventListener('click', () => { const cs = undoStack(); if (cs) cs.redo(); });
 $('#btn-zoom-in').addEventListener('click', () => zoomBy(1.25));
@@ -2353,51 +2190,9 @@ const diagnostics = createDiagnostics({
 $('#btn-diagnostic').addEventListener('click', diagnostics.copy);
 $('#btn-theme').addEventListener('click', toggleTheme);
 
-// browser file open fallback
-els.fileInput.addEventListener('change', async () => {
-  const file = els.fileInput.files[0];
-  if (!file) return;
-  let content;
-  try {
-    content = await file.text();
-  } catch (err) {
-    console.error(err);
-    showError({ title: `读取文件失败：${file.name}`, message: err.message || String(err), error: err });
-    return;
-  }
-  await openDiagramContent(content, file.name, null);
-});
-
-// --- drag & drop (browser & desktop) ----------------------------------------
-// Fix 15：BPMN 与 DMN 画布都绑定拖放——旧实现只绑 BPMN，DMN 模式下拖入文件毫无反应
-function bindCanvasDrop(host) {
-  host.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-    host.dataset.dragging = 'true';
-  });
-  host.addEventListener('dragleave', () => {
-    delete host.dataset.dragging;
-  });
-  host.addEventListener('drop', async (e) => {
-    e.preventDefault();
-    delete host.dataset.dragging;
-    const files = e.dataTransfer.files;
-    if (!files.length) return;
-    const file = files[0];
-    let content;
-    try {
-      content = await file.text();
-    } catch (err) {
-      console.error(err);
-      showError({ title: `读取文件失败：${file.name}`, message: err.message || String(err), error: err });
-      return;
-    }
-    await openDiagramContent(content, file.name, null);
-  });
-}
-bindCanvasDrop(els.canvas);
-bindCanvasDrop(els.dmnCanvas);
+// browser file open fallback + drag & drop —— 随 M1 移入 src/io/file-io.js
+fileIO.bindFileInput();
+fileIO.bindDropTargets([els.canvas, els.dmnCanvas]);
 
 // --- DMN view tabs -----------------------------------------------------------
 // tab 由 updateDmnViewTabs 按 getViews() 动态生成（Fix 9），点击处理器随 tab 一起绑定；
@@ -2409,11 +2204,11 @@ if (studio) {
     switch (action) {
       case 'new': return createNewDiagram();
       case 'new-dmn': return createNewDmnDiagram();
-      case 'open': return openFile();
-      case 'save': return saveFile(false);
-      case 'save-as': return saveFile(true);
-      case 'export-svg': return exportSVG();
-      case 'export-png': return exportPNG();
+      case 'open': return fileIO.openFile();
+      case 'save': return fileIO.saveFile(false);
+      case 'save-as': return fileIO.saveFile(true);
+      case 'export-svg': return fileIO.exportSVG();
+      case 'export-png': return fileIO.exportPNG();
       case 'undo': {
         const cs = undoStack();
         if (cs) cs.undo();
@@ -2447,7 +2242,7 @@ if (studio) {
   // 关窗守门「保存并关闭」（v0.1.10）：主进程 close 拦截后下发；仅当真正保存成功才回报放行关闭，
   // 另存对话框取消/失败则不回报，窗口保持打开。
   studio.onSaveBeforeClose(async () => {
-    const ok = await saveFile(false);
+    const ok = await fileIO.saveFile(false);
     if (ok) studio.allowWindowClose();
   });
 }
@@ -2465,12 +2260,12 @@ document.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (k === 'n' && e.shiftKey) { e.preventDefault(); createNewDmnDiagram(); }
   else if (k === 'n') { e.preventDefault(); createNewDiagram(); }
-  else if (k === 'o') { e.preventDefault(); openFile(); }
+  else if (k === 'o') { e.preventDefault(); fileIO.openFile(); }
   else if (k === 's') {
     // 与 Electron 菜单语义对齐（M12）：Ctrl+S 保存、Ctrl+Shift+S 另存（浏览器无菜单，保持一致）
     e.preventDefault();
-    saveFile(e.shiftKey);
-  } else if (k === 'p' && e.shiftKey) { e.preventDefault(); exportPNG(); }
+    fileIO.saveFile(e.shiftKey);
+  } else if (k === 'p' && e.shiftKey) { e.preventDefault(); fileIO.exportPNG(); }
   else if (k === 'b' && e.shiftKey) { e.preventDefault(); togglePropertiesPanel(); }
   else if (k === 'f' && e.shiftKey) { e.preventDefault(); zoomFit(); } // 菜单 Ctrl+Shift+F = 适应画布（M13）
   else if (k === 'f') { e.preventDefault(); openSearch(); }
