@@ -1,0 +1,93 @@
+# ci.yml — 分支 / PR 回归流水线
+#
+# 与 release.yml 的分工：
+#   ci.yml      —— 任何 master push 与 PR：lint → build → smoke → 纯逻辑套件
+#                  → 打包 AppImage → 全量 E2E（AppImage + Xvfb + CDP）
+#   release.yml —— 仅 v*.*.* tag：构建 Linux/Windows 产物并创建 GitHub Release
+#
+# 触发范围说明：`on.push.branches` 只匹配分支 ref，**tag 不会触发本 workflow**，
+# 因此 tag 发布不会与 release.yml 重复跑一遍。
+# 如需覆盖全部特性分支，把 branches 改为 ['**'] 即可（代价：每次 push 约多花 10 分钟）。
+#
+# 为什么必须打包 AppImage：7 个 E2E 套件以真实 Electron 应用为被测对象，
+# 通过 `--appimage-extract-and-run --no-sandbox --ozone-platform=x11` 启动后
+# 用 CDP 驱动（见 scripts/verify/run-all.mjs）。Electron ≥33 在 Xvfb 下必须显式
+# 指定 x11 ozone 平台，否则渲染进程起不来。
+
+name: CI
+
+on:
+  push:
+    branches: ['master']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint / Build / Smoke / Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # electron / electron-builder 工具链缓存（必须在 npm ci 之前恢复，
+      # 否则 npm postinstall 下载 electron 时缓存尚未就位，永不命中）
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-
+
+      # E2E 套件自建 Xvfb；显式安装，不依赖 runner 镜像的预装列表
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint JS
+        run: npm run lint:js
+
+      # lint:pack（bpmnlint 规则打包）→ vite build → 内置规则文档
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Smoke test
+        run: npm run test:smoke
+
+      # 先跑不需要 AppImage 的套件：这些只需十几秒，能在昂贵的 Electron
+      # 打包之前就暴露绝大多数逻辑回归（与下一步的全量运行有意少量重复）
+      - name: Pure-node regression suites
+        run: npm run test:verify
+
+      # E2E 的前置产物：AppImage
+      - name: Package Electron — Linux
+        run: npx electron-builder --linux --publish never
+
+      # 全量门禁编排：12 个套件（含 7 个 AppImage + Xvfb + CDP）
+      # 编排器自动递归定位 release/**/*.AppImage 并逐套件注入唯一 VERIFY_DISPLAY
+      - name: Full regression suites
+        run: npm run test:verify:all
+
+      # 失败时保留每套件的原始输出，便于定位（verify-logs/<suite>.log）
+      - name: Upload verify logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-logs
+          path: verify-logs/
+          if-no-files-found: ignore

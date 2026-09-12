@@ -3,9 +3,11 @@
 # 与本地自动打包流程 build-tag.sh 对齐：
 #   1. 版本预检（tag 必须等于 v + package.json 的 version，不一致立即失败）
 #   2. lint:pack（bpmnlint 规则打包）→ vite build（Web 产物 dist/）
-#   3. 渲染冒烟测试（Node + jsdom，44 项断言，无需浏览器）
+#   3. 渲染冒烟测试（Node + jsdom，45 项断言，无需浏览器）
 #   4. electron-builder 打包：Linux 在 ubuntu runner（AppImage/deb/tar.gz），
 #      Windows 在 windows runner（nsis/zip）— 各平台原生构建，无需 wine
+#   4.5 Linux 打包后跑全量回归E2E（AppImage + Xvfb + CDP，12 套件），
+#      并校验内置规则文档完整性；Windows 侧不接（Xvfb 仅 Linux）
 #   5. 汇总产物，以当前 tag 创建 GitHub Release：上传 Web 静态包 + 全部安装包，
 #      更新说明取自上/下两个版本 tag 之间的提交记录
 #
@@ -88,7 +90,7 @@ jobs:
       - name: Build web bundle
         run: npm run build
 
-      # ── 渲染冒烟测试（纯 BPMN / Camunda 7 / Camunda 8 / DMN，44 项）
+      # ── 渲染冒烟测试（纯 BPMN / Camunda 7 / Camunda 8 / DMN，45 项）
       - name: Smoke test
         run: npm run test:smoke
 
@@ -97,6 +99,27 @@ jobs:
       # 的 Create GitHub Release 步骤发布（与 build-tag.sh 的 --publish never 一致）
       - name: Package Electron — Linux
         run: npx electron-builder --linux --publish never
+
+      # ── 全量回归门（AppImage + Xvfb + CDP）：12 套件 / 205 项断言 ────
+      # 编排器递归定位 release/**/*.AppImage，逐套件注入唯一 VERIFY_DISPLAY
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Full regression suites
+        run: npm run test:verify:all
+
+      # ── 内置规则文档完整性（dist/docs/）：构建时会静默容忍单条缺失，
+      # 发版前必须显式校验，避免离线文档能力被无声降级 ──────────────
+      - name: Verify bundled rule docs
+        run: node scripts/fetch-rule-docs.mjs --check
+
+      - name: Upload verify logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-logs
+          path: verify-logs/
+          if-no-files-found: ignore
 
       # ── 收集 Web 静态产物为 zip 资产（含 package.json，对应本地 web/ 目录）
       - name: Package web asset
