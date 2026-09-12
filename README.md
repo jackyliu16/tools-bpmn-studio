@@ -166,8 +166,8 @@ release/win-unpacked/                  # 免安装目录（可直接双击运行
 | 层 | 命令 | 内容 | 前置 |
 | --- | --- | --- | --- |
 | 渲染冒烟 | `npm run test:smoke` | **45 项断言**：纯 BPMN / Camunda 7 / Camunda 8 / DMN 的导入零告警、元素渲染、8 个扩展服务（属性面板/小地图/校验/模拟/搜索/着色）可用、XML 往返、属性 provider 注册、bpmnlint 打包配置消费 | 无（Node + jsdom，经 `vite-node` 运行真实模块，不需浏览器/显示器） |
-| 纯逻辑套件 | `npm run test:verify` | **5 个套件 / 79 项断言**：studio 参数体系单测（描述符往返/双写命令/漂移/投影/检查规则）、规则文档路径映射、`electron/doc-links.cjs` 的 Markdown→HTML 注入面与 URL 白名单、lint 反向引用与 DI-label 误报回归 | 无 |
-| 全量回归 | `npm run test:verify:all` | **12 个套件 / 201 项断言**：在纯逻辑套件之上叠加 7 个 **AppImage + Xvfb + CDP** 端到端套件 | 已构建的 AppImage（`./build-head.sh --electron --targets AppImage`）与 `Xvfb` |
+| 纯逻辑套件 | `npm run test:verify` | **5 个套件 / 121 项断言**：studio 参数体系单测（描述符往返/双写命令/漂移/投影/检查规则）、规则文档路径映射、`electron/doc-links.cjs` 的 Markdown→HTML 注入面与 URL 白名单、抽取模块的纯函数（`xml-view` / `diagnostics` / `file-io`）、lint 反向引用与 DI-label 误报回归 | 无 |
+| 全量回归 | `npm run test:verify:all` | **12 个套件 / 247 项断言**：在纯逻辑套件之上叠加 7 个 **AppImage + Xvfb + CDP** 端到端套件 | 已构建的 AppImage（`./build-head.sh --electron --targets AppImage`）与 `Xvfb` |
 
 端到端套件在**真实打包产物**中驱动 UI（`--appimage-extract-and-run --no-sandbox --ozone-platform=x11`，经 CDP WebSocket 断言），覆盖：缩放（BPMN/DMN 相对缩放、DMN 视图切换后标签同步）、脏标记与关窗守卫、Sprint 3 并发锁与失败回滚、控制要素面板（Camunda 字段/默认流/条件/lint 联动/悬空清理）、studio 参数体系双写与原子 undo、顶部栏分级压缩、规则文档在线/离线降级。
 
@@ -227,17 +227,32 @@ bpmn-studio/
 │   ├── newDiagram.bpmn      # 新图默认内容
 │   └── icon.png             # 应用图标（scripts/make-icon.mjs 生成）
 ├── src/
-│   ├── main.js              # 渲染进程入口：BPMN/DMN 模式切换、modeler 组装、工具栏、文件 IO、快捷键
+│   ├── main.js              # 渲染进程入口：BPMN/DMN 模式切换、modeler 组装、工具栏、脏标记、快捷键（约 2350 行）
 │   ├── dmn-editor.js        # DMN 编辑器模块（dmn-js Modeler 封装、样式导入、模板）
+│   ├── diagnostics.js       # 诊断信息剪贴板载荷（分段收集 + 可单测的纯函数）
+│   ├── error-detail.js      # 错误卡片 / 导入警告详情
+│   ├── lint-l10n.js         # 校验面板中文标签与规则文档映射
+│   ├── io/file-io.js        # 文件打开/保存/导出/拖放（createFileIO）
+│   ├── ui/xml-view.js       # XML 面板：渲染、高亮、选中定位、编辑态、脱离模式
+│   ├── ui/metadata-dialog.js# 元数据弹窗（文件信息 / 文档信息 / 图表统计）
+│   ├── control/             # 控制要素：中文标签、Camunda 字段、网关默认流、studio 参数体系
 │   ├── style.css            # 应用外壳样式
-│   └── lint-config.js       # 由 `npm run lint:pack` 生成的打包校验配置
+│   └── lint-config.js       # 由 `npm run lint:pack` 生成的打包校验配置（gitignored）
 ├── electron/
 │   ├── main.cjs             # Electron 主进程：窗口、原生菜单、文件对话框 IPC（支持 .bpmn + .dmn）
+│   ├── doc-links.cjs        # 规则文档外链白名单 / 离线本地文档映射（三端共用）
 │   └── preload.cjs          # contextBridge 暴露 window.bpmnStudio
 └── scripts/
-    ├── smoke.mjs            # 冒烟测试（BPMN × 3 平台 + DMN × 3 场景，44 项）
+    ├── smoke.mjs            # 冒烟测试（BPMN × 3 平台 + DMN × 3 场景，45 项）
+    ├── lib/testkit.mjs      # 测试脚本共享断言 runner
+    ├── verify/              # 回归套件（run-all.mjs 编排器 + 12 个套件）
+    ├── diagnostics/         # 非门禁的一次性复现脚本（见该目录 README）
     └── make-icon.mjs        # 纯 Node 生成 PNG 图标
 ```
+
+> `src/main.js` 的渐进抽取（`io/`、`ui/`、`diagnostics.js`）遵循同一接缝约定：模块导出
+> `createXxx(deps)`，依赖为**显式注入的 getter**，不反向读取 `main.js` 的模块级变量。
+> 编辑器的状态所有权（modeler 生命周期、脏标记基线、命令栈游标）仍集中在 `main.js`。
 
 ### 渲染进程模块组装（src/main.js）
 

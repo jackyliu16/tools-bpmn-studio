@@ -129,4 +129,10 @@ if (eventIssues) {
 }
 
 modeler.destroy();
-process.exit(labelKeys.length > 0 ? 1 : 0);
+// 标准 N/M 汇总行：让 run-all.mjs 能解析计数，与其他套件输出一致
+const total = 2;
+const failedChecks =
+  (labelKeys.length > 0 ? 1 : 0) +
+  (eventIssues && Object.keys(eventIssues).filter((k) => k.endsWith('_label')).length > 0 ? 1 : 0);
+console.log(`\n${total - failedChecks}/${total} verify-patch-e2e checks passed`);
+process.exit(failedChecks ? 1 : 0);

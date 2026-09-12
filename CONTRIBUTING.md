@@ -39,14 +39,14 @@ What: src/style.css 按实测内容宽度加 media query 断点，≤×××px �
 npm run lint:js          # ESLint 9 flat config，0 error（no-console 为 warn，允许存在）
 npm run build            # lint:pack → lint:js → vite build → 内置规则文档
 npm run test:smoke       # 45 项，jsdom 渲染冒烟，秒级
-npm run test:verify      # 5 个纯逻辑套件 / 79 项断言，秒级
+npm run test:verify      # 5 个纯逻辑套件 / 121 项断言，秒级
 ```
 
 涉及运行时行为的改动，还必须跑全量端到端回归：
 
 ```sh
 ./build-head.sh --electron --targets AppImage   # 产出 release/**/*.AppImage
-npm run test:verify:all                         # 12 个套件 / 201 项断言（含 7 个 CDP E2E）
+npm run test:verify:all                         # 12 个套件 / 247 项断言（含 7 个 CDP E2E）
 ```
 
 `scripts/verify/run-all.mjs` 会自动递归定位 AppImage、逐套件分配唯一 `VERIFY_DISPLAY`、顺序执行并做超时

@@ -104,7 +104,34 @@ CI（新建 `.github/workflows/ci.yml` 覆盖 master push 与 PR；`release.yml`
 2. `verify-sprint3` 与 `verify-control-panel` 默认都用 `:79`、`verify-dirty-guard`/`verify-topbar-narrow`/
    `verify-doc-offline` 都用 `:78`，同号 Xvfb 的 `/tmp/.X<n>-lock` 残留会互踩 → 必须逐套件注入唯一 `VERIFY_DISPLAY`。
 
-当前门禁：**12 个套件 / 205 项断言**，本机 E2E 部分耗时约 1 分钟（不含 AppImage 构建）。
+当前门禁：**12 个套件 / 247 项断言**，本机 E2E 部分耗时约 1 分钟（不含 AppImage 构建）。
+
+---
+
+## main.js 渐进抽取（2026-09-12，M1–M4）
+
+评估发现 `src/main.js` 为 3269 行 / 127 个顶层函数 / 20 个模块级可变变量。本轮按
+「行为等价、不引入新抽象」原则抽取四个模块，**不** 引入 `ActiveEditorContext`，
+37 处 DMN/BPMN 模式分支保持原地不动（根因级重构仍留待 v0.2.0）。
+
+| 模块 | 迁出内容 | 安全网 |
+| --- | --- | --- |
+| `src/ui/xml-view.js`（M2） | XML 面板渲染/高亮/选中定位/编辑态/脱离模式 + 3 个纯函数 | `verify-studio-params` / `verify-sprint3` + 14 项单测 |
+| `src/ui/metadata-dialog.js`（M3） | 元数据弹窗（文件/文档/统计，BPMN+DMN 两分支） | 新增 3 项 E2E（弹窗开/内容/关闭） |
+| `src/diagnostics.js`（M4） | 诊断载荷收集；原 238 行 `copyDiagnosticInfo` 拆为 7 段（最长 68 行） | 新增 21 项单测 + 1 项 E2E |
+| `src/io/file-io.js`（M1） | 打开/保存/导出/拖放 + `basename` | `verify-dirty-guard` / `verify-sprint3` / `verify-studio-params` + 4 项单测 |
+
+结果：`src/main.js` 3269 → 2350 行（-28%），单测套件 33 → 74 项，全套件断言 170 → 247。
+
+统一接缝约定（后续抽取请沿用）：模块导出 `createXxx(deps)`，依赖是**显式注入的 getter**，
+模块不反向读取 `main.js` 的模块级变量；状态所有权（modeler 生命周期、脏标记基线
+`lastSavedXML`、命令栈游标 `savedStackIdx`、`_modelBusy` 互斥）全部留在 `main.js`。
+
+抽取中保留的两个真实性约束（已在 `unit-render-units.mjs` 用断言锁住）：
+1. `highlightXml` 的输入先经 `escapeHtml`，导致标签名分支永远匹配不到、标签名前缀落在
+   `xml-punc` —— 这是重构前的既有可能行为，不得 “顺手修”。
+2. `diagnostics.js` 版本号经 `deps.versions` 注入而不 `import package.json`：裸 node 导入
+   JSON 需 `with { type: 'json' }`，而 vite 不需要 —— 注入使两侧都能跑。
 5. 新建图首次点「✔ 校验」按钮 → 面板应立即展开
 6. （v0.1.12 新增）磁盘满/中途 kill 进程时保存 → 原文件完好（可 `ulimit -f` 模拟）
 7. （v0.1.12 新增）XML 面板编辑模式 → 直接打开另一文件 → 面板应退出编辑态且内容随新模型刷新
