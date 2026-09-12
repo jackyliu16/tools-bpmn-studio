@@ -222,4 +222,5 @@ const FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
   }
 }
 
-finish();
+// 必须 process.exit —— 裸 finish() 会丢弃返回码，断言全挂时进程仍退出 0（静默绿灯）
+process.exit(finish('studio-param-unit checks'));

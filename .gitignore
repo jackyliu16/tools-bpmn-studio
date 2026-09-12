@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# 回归套件编排器日志（scripts/verify/run-all.mjs）
+verify-logs/
+
 # Electron-builder release artifacts
 release/
 

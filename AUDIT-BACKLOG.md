@@ -68,6 +68,43 @@
 2. 未命名文件的「保存并关闭」→ 弹框后点取消 → 窗口须保持打开
 3. 纯浏览器构建刷新/关页触发 beforeunload 提示
 4. 切换属性面板/校验面板/小地图后，视图菜单勾选标记须跟随真实状态
+
+---
+
+## 回归体系整改（2026-09-12，承接 v0.1.13 多维评估）
+
+### 已修复：测试静默绿灯（真实缺陷）
+
+`scripts/verify/studio-param-unit.mjs` 结尾为裸 `finish();` —— `createTester().finish()` 的返回码被丢弃，
+**24 项断言全失败时进程仍退出 0**。已改为 `process.exit(finish(...))`，并用注入失败断言实测确认退出码 1。
+引入该缺陷的原因是 `finish()` 既打印又返回码的双重语义；已在 `scripts/lib/testkit.mjs` 的用法中统一为
+「必须 `process.exit(finish())`」。
+
+### 已归档：4 个非门禁脚本 → `scripts/diagnostics/`
+
+| 脚本 | 归档原因 |
+| --- | --- |
+| `test-lint-patch.mjs` | 原型补丁方案（改写 bpmn-js-bpmnlint 内部 `_formatIssues`/`_createIssues`）已被根因修复 `rebuildFlowNodeBackrefs` 取代；现存 8/9 断言失败，最后一项 `_createIssues was called — no capture` 断言的是已变更的内部结构。**判定为历史遗留断言，不改产品代码。** |
+| `repro-diagnostic.mjs` | 依赖 `diagram-js/lib/util/EscapeUtil` 旧模块路径，升级后已无法运行（`ERR_MODULE_NOT_FOUND`） |
+| `plain-node-check.mjs` | 只 `console.log` 观察结果，**无断言、无退出码**——跑起来不报错不等于通过 |
+| `check-backref-fix.mjs` | 同上，根因定位用的一次性验证 |
+
+归档而非删除：审计报告会引用其结论，保留可执行证据便于复查；移出门禁目录避免被误读为「测试通过」。
+
+### 已补齐：172 项断言接入 CI（此前完全未纳管）
+
+评估发现 15 个 `scripts/verify/*.mjs`（172 项断言，其中 7 个需 AppImage + Xvfb + CDP）**一个都没进 CI**，
+仅 `test:smoke`（45 项）在流水线里。现新增 `scripts/verify/run-all.mjs` 编排器（显式门禁清单、统一 AppImage
+定位、显示号隔离 :91 起、顺序执行、超时 kill、失败传播），并以 `npm run test:verify` / `test:verify:all` 接入
+CI（新建 `.github/workflows/ci.yml` 覆盖 master push 与 PR；`release.yml` 在打包后追加全量 E2E）。
+
+编排器存在的两个硬理由（实测）：
+1. E2E 脚本内建 `newestAppImage()` 只认 `release/<dir>/electron/BPMN Studio.AppImage`（build-head.sh 布局），
+   而 CI 里 electron-builder 产出在 `release/BPMN Studio-<ver>.AppImage` → 不传显式路径必失败；
+2. `verify-sprint3` 与 `verify-control-panel` 默认都用 `:79`、`verify-dirty-guard`/`verify-topbar-narrow`/
+   `verify-doc-offline` 都用 `:78`，同号 Xvfb 的 `/tmp/.X<n>-lock` 残留会互踩 → 必须逐套件注入唯一 `VERIFY_DISPLAY`。
+
+当前门禁：**12 个套件 / 205 项断言**，本机 E2E 部分耗时约 1 分钟（不含 AppImage 构建）。
 5. 新建图首次点「✔ 校验」按钮 → 面板应立即展开
 6. （v0.1.12 新增）磁盘满/中途 kill 进程时保存 → 原文件完好（可 `ulimit -f` 模拟）
 7. （v0.1.12 新增）XML 面板编辑模式 → 直接打开另一文件 → 面板应退出编辑态且内容随新模型刷新

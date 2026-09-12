@@ -22,6 +22,8 @@
     "lint:pack": "bpmnlint-pack-config -c .bpmnlintrc -o src/lint-config.js -t es",
     "lint:js": "eslint .",
     "test:smoke": "vite-node scripts/smoke.mjs",
+    "test:verify": "node scripts/verify/run-all.mjs --pure",
+    "test:verify:all": "node scripts/verify/run-all.mjs --all",
     "dist": "npm run build && electron-builder --linux",
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:win": "npm run build && electron-builder --win",

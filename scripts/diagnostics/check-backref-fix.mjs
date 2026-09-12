@@ -3,7 +3,7 @@
  * back-references after parsing, then lint. If the 7 false-positive
  * errors disappear, the root cause is confirmed as missing back-refs.
  *
- * Usage: npx vite-node scripts/check-backref-fix.mjs
+ * Usage: npx vite-node scripts/diagnostics/check-backref-fix.mjs
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

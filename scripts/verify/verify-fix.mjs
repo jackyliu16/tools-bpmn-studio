@@ -7,7 +7,8 @@
  *      linting.update + live-state fallback) captures the live issues with
  *      their category, instead of always printing "none".
  *
- * Usage: npx vite-node scripts/verify-fix.mjs
+ * Usage: npx vite-node scripts/verify/verify-fix.mjs
+ *        （CI/本机整体回归：node scripts/verify/run-all.mjs --pure）
  */
 import { JSDOM } from 'jsdom';
 import cssEscape from 'css.escape';

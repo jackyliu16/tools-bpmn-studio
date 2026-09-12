@@ -1,6 +1,6 @@
 /**
  * Plain node (no vite-node) verification of the back-ref issue.
- * Usage: node scripts/plain-node-check.mjs
+ * Usage: node scripts/diagnostics/plain-node-check.mjs
  */
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';

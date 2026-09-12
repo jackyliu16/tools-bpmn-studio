@@ -9,7 +9,7 @@
  *    once('linting.completed') after await → canvas.resized() → 2s timeout)
  *    and print what the diagnostics would report.
  *
- * Usage: npx vite-node scripts/repro-diagnostic.mjs
+ * Usage: npx vite-node scripts/diagnostics/repro-diagnostic.mjs
  */
 import { JSDOM } from 'jsdom';
 import cssEscape from 'css.escape';

@@ -6,7 +6,7 @@
  *   (a) this._issues never includes DI-label false-positives (button count)
  *   (b) _createIssues never receives DI-label element IDs (overlay icons)
  *
- * Usage: npx vite-node scripts/test-lint-patch.mjs
+ * Usage: npx vite-node scripts/diagnostics/test-lint-patch.mjs
  */
 import { JSDOM } from 'jsdom';
 import cssEscape from 'css.escape';
