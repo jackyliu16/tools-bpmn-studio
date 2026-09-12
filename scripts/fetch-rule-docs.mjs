@@ -1,8 +1,13 @@
 /**
  * fetch-rule-docs — 构建时从上游 GitHub 拉取全部校验规则的文档，写入 dist/docs/。
  *
- * 目的：内网 / 离线机器上「规则文档」可降级阅读构建时打包的最新版，而非依赖外网。
- * 文档不进仓库（dist/ 在 .gitignore），每次构建从 main 分支取最新。
+ * 目的：内网 / 离线机器上「规则文档」可降级阅读构建时打包的版本，而非依赖外网。
+ * 文档不进仓库（dist/ 在 .gitignore）。
+ *
+ * 上游 ref 固定为 **commit SHA**（而非 main 分支）：同一份代码任何时候构建得到的
+ * 文档字节一致，内容不会随上游漂移。升级方式：
+ *   node scripts/fetch-rule-docs.mjs --update-refs   # 打印两个仓库默认分支的当前 HEAD SHA
+ * 再手工更新下面的 BPMNLINT_REF / CAMUNDA_REF 常量。
  *
  * 路径约定（与 electron/doc-links.cjs 的 localDocRelPath 严格一致）：
  *   bpmnlint 规则  → dist/docs/rules/<rule>.md       （仓库 docs/rules/*.md）
@@ -14,8 +19,9 @@
  * 由调用方（build-lib.sh）决定是否告警 —— 文档缺失不阻断发布。
  *
  * 用法:
- *   node scripts/fetch-rule-docs.mjs            # 拉取并写入 dist/docs/
- *   node scripts/fetch-rule-docs.mjs --check    # 拉取后断言完整性（可缺失项仅限已知无文档规则）
+ *   node scripts/fetch-rule-docs.mjs               # 拉取并写入 dist/docs/
+ *   node scripts/fetch-rule-docs.mjs --check       # 拉取后断言完整性（可缺失项仅限已知无文档规则）
+ *   node scripts/fetch-rule-docs.mjs --update-refs # 打印上游当前 HEAD SHA，供手工更新常量
  */
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -32,8 +38,12 @@ const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 800;
 const CONCURRENCY = 6; // raw.githubusercontent 高并发易被限流/超时，压低并发 + 重试
 
-const BPMNLINT_RAW_BASE = 'https://raw.githubusercontent.com/bpmn-io/bpmnlint/main/docs/rules/';
-const CAMUNDA_RAW_BASE = 'https://raw.githubusercontent.com/camunda/bpmnlint-plugin-camunda/main/rules/';
+// 上游 commit SHA —— 固定 ref 保证构建可复现；用 --update-refs 获取新值。
+const BPMNLINT_REF = 'ab3c607fd05e71825bc4d9fea30332e5e1118980'; // bpmn-io/bpmnlint @ main
+const CAMUNDA_REF = '9e7aa425032a3933f9af64a6203d451a4cf9720e'; // camunda/bpmnlint-plugin-camunda @ main
+
+const BPMNLINT_RAW_BASE = `https://raw.githubusercontent.com/bpmn-io/bpmnlint/${BPMNLINT_REF}/docs/rules/`;
+const CAMUNDA_RAW_BASE = `https://raw.githubusercontent.com/camunda/bpmnlint-plugin-camunda/${CAMUNDA_REF}/rules/`;
 
 // 上游仓库确认没有独立文档的规则（拉取必 404）——--check 时豁免
 const KNOWN_MISSING_DOCS = new Set(['global']);
@@ -77,7 +87,34 @@ async function fetchText(url) {
   throw lastErr;
 }
 
+/** --update-refs：打印两个上游仓库默认分支的当前 HEAD SHA（只打印，不修改文件） */
+async function printCurrentRefs() {
+  const repos = [
+    ['BPMNLINT_REF', 'bpmn-io/bpmnlint', 'main'],
+    ['CAMUNDA_REF', 'camunda/bpmnlint-plugin-camunda', 'main']
+  ];
+  for (const [constName, slug, branch] of repos) {
+    try {
+      const res = await fetch(`https://api.github.com/repos/${slug}/commits/${branch}`, {
+        headers: { Accept: 'application/vnd.github+json' },
+        signal: AbortSignal.timeout(TIMEOUT_MS)
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const sha = (await res.json()).sha;
+      console.log(`const ${constName} = '${sha}'; // ${slug} @ ${branch}`);
+    } catch (err) {
+      console.error(`无法解析 ${slug}@${branch}: ${err.message}`);
+      process.exitCode = 1;
+    }
+  }
+}
+
 async function main() {
+  if (process.argv.includes('--update-refs')) {
+    await printCurrentRefs();
+    return;
+  }
+
   const rules = Object.keys(RULE_LABELS).sort();
   await rm(DIST_DOCS, { recursive: true, force: true });
   await mkdir(DIST_DOCS, { recursive: true });
