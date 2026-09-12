@@ -259,6 +259,16 @@ await click('#btn-info-close');
 const metaHidden = await waitFor(`document.querySelector('#info-modal').classList.contains('hidden')`);
 check('M3 metadata dialog closes via 关闭 button', metaHidden);
 
+// --- 10. M4: diagnostics collection runs end-to-end ---------------------------
+// M4 把 238 行的 copyDiagnosticInfo 拆为分段函数。此处在真实产物中跑完整条收集链
+// （基本信息 → 版本 → 导入警告 → lint 活模型扫描 → 元素表 → 模型完整性 → definitions），
+// 以状态栏文案作为“跑到最后一步且未抛异常”的可观测证据（剪贴板内容无法经 CDP 直读）。
+await evaluate(`document.querySelector('#status-left').textContent = ''`);
+await click('#btn-diagnostic');
+const diagDone = await waitFor(`/诊断信息已复制到剪贴板/.test(document.querySelector('#status-left').textContent)`);
+check('M4 diagnostics copy completes and reports element count', diagDone,
+  await evaluate(`document.querySelector('#status-left').textContent`));
+
 console.log('\n' + results.join('\n'));
 console.log(`\n${failed === 0 ? 'ALL CHECKS PASSED' : failed + ' CHECK(S) FAILED'} (${results.length} total)`);
 

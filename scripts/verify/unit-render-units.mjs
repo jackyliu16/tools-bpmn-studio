@@ -8,13 +8,21 @@
  * 当前覆盖：
  *   - electron/doc-links.cjs —— 极简 Markdown → HTML（安全敏感：注入面）+ 文档白名单
  *   - src/ui/xml-view.js    —— escapeHtml / highlightXml / findElementSpans（M2 抽出）
+ *   - src/diagnostics.js    —— formatLintIssues / modelIntegrityProblems / elementLine 等（M4 抽出）
  *
- * 随抽取阶段扩展（见 PLAN S5/S7）：
- *   - src/diagnostics.js   —— formatDiagnostics
+ * 随抽取阶段扩展（见 PLAN）。
  */
 import { createRequire } from 'node:module';
 
 import { createXmlView } from '../../src/ui/xml-view.js';
+import {
+  severityOf,
+  maxIdLength,
+  elementLine,
+  formatDiagnostics,
+  formatLintIssues,
+  modelIntegrityProblems
+} from '../../src/diagnostics.js';
 import { createTester } from '../lib/testkit.mjs';
 
 const require = createRequire(import.meta.url);
@@ -185,6 +193,98 @@ const { check, finish } = createTester();
 
   check('xmlView.findElementSpans: 正则元字符 id 不误匹配（转义正确）',
     findElementSpans('<a id="x.y"/>', 'x.y').length === 1 && findElementSpans('<a id="xzy"/>', 'x.y').length === 0);
+}
+
+// ── src/diagnostics.js :: 纯函数（M4 抽出的安全网）─────────────────────────────
+{
+  check('diagnostics.severityOf: 优先 category', severityOf({ category: 'error', severity: 'warn' }) === 'error');
+  check('diagnostics.severityOf: 回退 severity', severityOf({ severity: 'warn' }) === 'warn');
+  check('diagnostics.severityOf: 两者皆无 → ?', severityOf({}) === '?');
+
+  check('diagnostics.maxIdLength: 下限 6', maxIdLength([{ id: 'a' }]) === 6);
+  check('diagnostics.maxIdLength: 取最长 id', maxIdLength([{ id: 'a' }, { id: 'abcdefgh' }]) === 8);
+
+  const shape = { id: 'Task_1', businessObject: { $type: 'bpmn:Task' }, incoming: [{ id: 'F1' }], outgoing: [], waypoints: null };
+  const shapeLine = elementLine(shape, 6);
+  check('diagnostics.elementLine: 定宽对齐 + in/out + shape 标记',
+    shapeLine.startsWith('  Task_1   ') && shapeLine.includes('in=[F1] out=[]') && shapeLine.endsWith('(shape)') &&
+    shapeLine.includes('Task' + ' '.repeat(16)));
+  const connLine = elementLine({ id: 'F1', businessObject: { $type: 'bpmn:SequenceFlow' }, waypoints: [{}] }, 6);
+  check('diagnostics.elementLine: waypoints → conn，且剥除 bpmn: 前缀',
+    connLine.endsWith('(conn)') && connLine.includes('SequenceFlow') && !connLine.includes('bpmn:SequenceFlow'));
+  check('diagnostics.elementLine: 无 $type 时回退 ?', elementLine({ id: 'X', businessObject: {} }, 6).includes(' ?'));
+
+  check('diagnostics.formatDiagnostics: 行数组 join 为文本', formatDiagnostics(['a', '', 'b']) === 'a\n\nb');
+  check('diagnostics.formatDiagnostics: 空输入 → 空串', formatDiagnostics([]) === '');
+
+  const isLabel = (id) => typeof id === 'string' && id.endsWith('_label');
+  const r = formatLintIssues({
+    T1: [{ category: 'error', rule: 'no-implicit-start', message: 'msg1' }],
+    T2: [{ severity: 'warn', rule: 'r2' }],
+    T1_label: [{ category: 'error', rule: 'x', message: 'y' }]
+  }, isLabel);
+  check('diagnostics.formatLintIssues: 真实元素与 DI-label 误报分离',
+    r.realCount === 2 && r.filteredIds.length === 1 && r.filteredIds[0] === 'T1_label');
+  check('diagnostics.formatLintIssues: 计数与标题行',
+    r.totalIssues === 2 && r.lines[0] === '  2 issue(s) on 2 element(s):');
+  check('diagnostics.formatLintIssues: 逐条 issue 带 severity/rule/message',
+    r.lines.includes('  [error] T1 — no-implicit-start: msg1') && r.lines.includes('  [warn] T2 — r2: '));
+  check('diagnostics.formatLintIssues: 抑制行记录被过滤的 id',
+    r.lines.includes('  (suppressed 1 DI label false-positives: T1_label)'));
+  check('diagnostics.formatLintIssues: 空表 → 无行',
+    formatLintIssues({}, isLabel).lines.length === 0 && formatLintIssues({}, isLabel).totalIssues === 0);
+
+  const flowNode = (id) => ({
+    id,
+    di: {},
+    businessObject: {
+      $type: 'bpmn:Task',
+      $instanceOf: (t) => t === 'bpmn:FlowNode',
+      incoming: [],
+      outgoing: []
+    },
+    incoming: [],
+    outgoing: []
+  });
+
+  const okRegistry = { T1: {}, T2: {}, F1: {} };
+  const okFlow = {
+    id: 'F1',
+    di: {},
+    waypoints: [{}],
+    businessObject: { $type: 'bpmn:SequenceFlow', sourceRef: { id: 'T1' }, targetRef: { id: 'T2' } }
+  };
+  check('diagnostics.modelIntegrityProblems: 全部正常 → 空数组',
+    modelIntegrityProblems([okFlow, flowNode('T1')], (id) => okRegistry[id], isLabel).length === 0);
+
+  const badRef = {
+    id: 'F1',
+    di: {},
+    waypoints: [{}],
+    businessObject: { $type: 'bpmn:SequenceFlow', sourceRef: { id: 'MISSING' }, targetRef: null }
+  };
+  const refProblems = modelIntegrityProblems([badRef], (id) => okRegistry[id], isLabel);
+  check('diagnostics.modelIntegrityProblems: 未解析 sourceRef 被报告',
+    refProblems.includes('F1: sourceRef unresolved (MISSING)'));
+  check('diagnostics.modelIntegrityProblems: 缺失 targetRef 被报告',
+    refProblems.includes('F1: targetRef missing'));
+
+  const backrefShape = flowNode('T1');
+  backrefShape.incoming = [{ id: 'F1' }];
+  const backrefProblems = modelIntegrityProblems([backrefShape], () => ({}), isLabel);
+  check('diagnostics.modelIntegrityProblems: 已连线但反向引用缺失 → 报告',
+    backrefProblems.length === 1 && /back-references missing on 1 connected flow node\(s\): T1/.test(backrefProblems[0]));
+
+  const noDiShape = flowNode('T9');
+  delete noDiShape.di;
+  const noDiProblems = modelIntegrityProblems([noDiShape], () => ({}), isLabel);
+  check('diagnostics.modelIntegrityProblems: 缺 DI 条目 → 报告',
+    noDiProblems.length === 1 && noDiProblems[0] === 'no DI entry for: T9');
+
+  const labelNoDi = flowNode('T1_label');
+  delete labelNoDi.di;
+  check('diagnostics.modelIntegrityProblems: DI-label 缺 DI 不报告',
+    modelIntegrityProblems([labelNoDi], () => ({}), isLabel).length === 0);
 }
 
 process.exit(finish('unit-render-units checks'));

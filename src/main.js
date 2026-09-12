@@ -63,7 +63,11 @@ import { createXmlView } from './ui/xml-view.js';
 // 元数据弹窗（文件/文档/统计）—— 从本文件抽出的 M3 视图模块
 import { createMetadataDialog } from './ui/metadata-dialog.js';
 
-// package versions (reported by the diagnostics clipboard payload)
+// 诊断信息剪贴板载荷 —— 从本文件抽出的 M4 模块
+import { createDiagnostics } from './diagnostics.js';
+
+// package.json 版本号：诊断载荷用（M4 模块经 deps.versions 接收，避免其裸 node 单测
+// 受 Node 的 JSON import attribute 限制）
 import bpmnJsPkg from 'bpmn-js/package.json';
 import bpmnJsBpmnlintPkg from 'bpmn-js-bpmnlint/package.json';
 import bpmnlintPkg from 'bpmnlint/package.json';
@@ -2320,269 +2324,33 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// --- diagnostics (copy-to-clipboard) -------------------------------------------
-async function copyDmnDiagnosticInfo() {
-  if (!dmnModeler) return;
-
-  setStatus('正在收集 DMN 诊断信息…');
-  const lines = [];
-
-  lines.push('=== DMN Studio Diagnostics ===');
-  lines.push(`Timestamp: ${new Date().toISOString()}`);
-  lines.push(`Mode: DMN`);
-  lines.push(`File: ${currentFileName}`);
-  lines.push(`Current View: ${currentDmnView}`);
-  lines.push('');
-
-  try {
-    const { xml } = await dmnModeler.saveXML({ format: true });
-    lines.push('--- XML Length ---');
-    lines.push(`  ${xml.length} characters`);
-    lines.push('');
-  } catch (err) {
-    lines.push(`--- XML Error --- ${err.message}`);
-    lines.push('');
+// --- diagnostics (moved to src/diagnostics.js — M4) --------------------------------
+// 收集与格式化（原 copyDiagnosticInfo 约 240 行，已拆为 基本信息/版本/导入警告/
+// lint/元素表/完整性/definitions 分段函数）都在模块内；此处只注入读取本文件状态的
+// getter 与单例（lintConfig 是 lint:pack 生成物，刻意不直接 import 进模块）。
+const diagnostics = createDiagnostics({
+  els,
+  getMode: () => editorMode,
+  getBridge: () => studio,
+  getBpmnModeler: () => bpmnModeler,
+  getDmnModeler: () => dmnModeler,
+  getDmnService: (service) => dmnGet(service),
+  getFileName: () => currentFileName,
+  getPlatform: () => currentPlatform,
+  isDirty: () => isDirty,
+  setStatus,
+  copyTextToClipboard,
+  isDiLabelElement,
+  getLintRuleCount: () => Object.keys(lintConfig.config.rules).length,
+  getCurrentDmnView: () => currentDmnView,
+  versions: {
+    bpmnJs: bpmnJsPkg.version,
+    bpmnJsBpmnlint: bpmnJsBpmnlintPkg.version,
+    bpmnlint: bpmnlintPkg.version
   }
+});
 
-  try {
-    const registry = dmnGet('elementRegistry');
-    const all = registry ? registry.getAll() : [];
-    lines.push(`--- Element Registry (${all.length}) ---`);
-    for (const el of all) {
-      const type = (el.businessObject?.$type || '?').replace('dmn:', '');
-      lines.push(`  ${el.id || '(no id)'} — ${type}`);
-    }
-    lines.push('');
-  } catch (err) {
-    lines.push(`--- Element Registry Error: ${err.message} ---`);
-    lines.push('');
-  }
-
-  const text = lines.join('\n');
-  await copyTextToClipboard(text);
-
-  setStatus('DMN 诊断信息已复制到剪贴板');
-}
-
-async function copyDiagnosticInfo() {
-  if (editorMode === 'dmn') {
-    await copyDmnDiagnosticInfo();
-    return;
-  }
-  if (!bpmnModeler) return;
-
-  setStatus('正在收集诊断信息…');
-  const lines = [];
-
-  // ── basic info ──
-  lines.push('=== BPMN Studio Diagnostics ===');
-  lines.push(`Timestamp: ${new Date().toISOString()}`);
-  lines.push(`Platform: ${currentPlatform || 'unknown'}`);
-  lines.push(`File: ${currentFileName}${isDirty ? ' (unsaved changes)' : ''}`);
-
-  // ── versions ──
-  lines.push('');
-  lines.push('--- Versions ---');
-  lines.push(`  bpmn-js: ${bpmnJsPkg.version}`);
-  lines.push(`  bpmn-js-bpmnlint: ${bpmnJsBpmnlintPkg.version} (bundled rules: bpmnlint ${bpmnlintPkg.version})`);
-  if (studio && studio.getVersions) {
-    try {
-      const v = await studio.getVersions();
-      if (v) {
-        lines.push(`  BPMN Studio: ${v.app} (Electron ${v.electron} / Chromium ${v.chrome} / Node ${v.node}, ${v.platform})`);
-      }
-    } catch { /* ignore */ }
-  } else {
-    lines.push(`  Runtime: browser (${navigator.userAgent})`);
-  }
-  lines.push('');
-
-  // ── import warnings from the ORIGINAL file load (kept in the notice bar) ──
-  const loadWarnings = els.noticeBar._warnings || [];
-  if (loadWarnings.length) {
-    lines.push(`--- Import Warnings (original load: ${loadWarnings.length}) ---`);
-    loadWarnings.forEach(w => lines.push(`  ${w.message || String(w)}`));
-    lines.push('');
-  }
-
-  // ── lint state (LIVE model — non-invasive, no re-import) ──
-  // NOTE: BpmnModeler only proxies `on`/`off` to the eventBus — there is no
-  // `modeler.once()`.  Subscribe via `eventBus.once()` instead.
-  lines.push('--- Lint Issues ---');
-  try {
-    const lintModule = bpmnModeler.get('linting');
-    let lintIssues = (lintModule && lintModule._issues) || {};
-    let lintSource = 'last known state (completion event timed out — values may be stale)';
-
-    // trigger one fresh, non-destructive lint pass and wait for its result
-    const eventBus = bpmnModeler.get('eventBus');
-    const result = await new Promise(resolve => {
-      const timeout = setTimeout(() => resolve(null), 3000);
-      eventBus.once('linting.completed', (ev) => {
-        clearTimeout(timeout);
-        resolve(ev);
-      });
-      if (typeof lintModule.update === 'function') {
-        try {
-          lintModule.update();
-        } catch { /* ignore */ }
-      }
-    });
-
-    if (result && result.issues) {
-      lintIssues = result.issues;
-      lintSource = 'fresh lint pass';
-    }
-    lines.push(`  collection: ${lintSource}`);
-
-    try {
-      const active = typeof lintModule.isActive === 'function' ? lintModule.isActive() : null;
-      if (active !== null) {
-        lines.push(`  overlays active: ${active}`);
-      }
-    } catch { /* ignore */ }
-
-    // markers currently rendered on the canvas (what the user actually sees)
-    try {
-      const overlays = bpmnModeler.get('overlays');
-      const marked = [];
-      for (const el of bpmnModeler.get('elementRegistry').getAll()) {
-        const ovs = overlays.get(el.id);
-        if (ovs && ovs.length) marked.push(`${el.id}×${ovs.length}`);
-      }
-      lines.push(`  canvas markers: ${marked.length ? marked.join(', ') : 'none'}`);
-    } catch { /* no overlay service */ }
-
-    lines.push(`  rules configured: ${Object.keys(lintConfig.config.rules).length}`);
-
-    if (lintIssues && Object.keys(lintIssues).length) {
-      const filteredIds = [];
-      const realIds = [];
-      for (const id of Object.keys(lintIssues)) {
-        (isDiLabelElement(id) ? filteredIds : realIds).push(id);
-      }
-
-      if (realIds.length) {
-        let total = 0;
-        for (const id of realIds) total += (lintIssues[id] || []).length;
-        lines.push(`  ${total} issue(s) on ${realIds.length} element(s):`);
-        for (const id of realIds) {
-          for (const issue of (lintIssues[id] || [])) {
-            const severity = issue.category || issue.severity || '?';
-            lines.push(`  [${severity}] ${id} — ${issue.rule || '?'}: ${issue.message || ''}`);
-          }
-        }
-      }
-
-      if (filteredIds.length) {
-        lines.push(`  (suppressed ${filteredIds.length} DI label false-positives: ${filteredIds.join(', ')})`);
-      }
-    } else {
-      lines.push('  none ✓');
-    }
-    lines.push('');
-  } catch (err) {
-    lines.push(`  collection FAILED: ${err.message}`);
-    lines.push('');
-  }
-
-  // ── element registry ──
-  let elementCount = 0;
-  try {
-    const registry = bpmnModeler.get('elementRegistry');
-    const all = registry.getAll();
-    elementCount = all.length;
-    lines.push(`--- Element Registry (${all.length}) ---`);
-    const maxId = Math.max(6, ...all.map(e => e.id.length));
-    for (const el of all) {
-      const type = (el.businessObject?.$type || '?').replace('bpmn:', '');
-      const inStr = (el.incoming || []).map(e => e.id).join(', ');
-      const outStr = (el.outgoing || []).map(e => e.id).join(', ');
-      const conn = el.waypoints ? 'conn' : 'shape';
-      lines.push(`  ${el.id.padEnd(maxId + 2)} ${type.padEnd(20)} in=[${inStr}] out=[${outStr}] (${conn})`);
-    }
-    lines.push('');
-  } catch (err) {
-    lines.push(`--- Element Registry Error: ${err.message} ---`);
-    lines.push('');
-  }
-
-  // ── model integrity ──
-  lines.push('--- Model Integrity ---');
-  try {
-    const registry = bpmnModeler.get('elementRegistry');
-    const all = registry.getAll();
-    const problems = [];
-
-    // (1) sequence flows whose source/target does not resolve
-    for (const el of all) {
-      const bo = el.businessObject;
-      if (!bo || bo.$type !== 'bpmn:SequenceFlow') continue;
-      const refId = (ref) => ref && (typeof ref === 'object' ? ref.id : ref);
-      const src = refId(bo.sourceRef);
-      const tgt = refId(bo.targetRef);
-      if (!src || !registry.get(src)) {
-        problems.push(`${el.id}: sourceRef ${src ? `unresolved (${src})` : 'missing'}`);
-      }
-      if (!tgt || !registry.get(tgt)) {
-        problems.push(`${el.id}: targetRef ${tgt ? `unresolved (${tgt})` : 'missing'}`);
-      }
-    }
-
-    // (2) back-reference population — the condition under which the
-    //     connectivity rules (no-disconnected, no-implicit-start/end)
-    //     report false positives
-    const boBackrefMissing = [];
-    for (const el of all) {
-      const bo = el.businessObject;
-      if (!bo || el.waypoints) continue;
-      if (typeof bo.$instanceOf !== 'function' || !bo.$instanceOf('bpmn:FlowNode')) continue;
-      const connected = (el.incoming || []).length > 0 || (el.outgoing || []).length > 0;
-      const boRefs = (bo.incoming || []).length > 0 || (bo.outgoing || []).length > 0;
-      if (connected && !boRefs) boBackrefMissing.push(el.id);
-    }
-    if (boBackrefMissing.length) {
-      problems.push(`back-references missing on ${boBackrefMissing.length} connected flow node(s): ${boBackrefMissing.join(', ')} — connectivity lint rules report false positives here`);
-    }
-
-    // (3) model elements without a DI entry
-    const noDi = all
-      .filter(el => !el.di && !isDiLabelElement(el.id))
-      .map(el => el.id);
-    if (noDi.length) {
-      problems.push(`no DI entry for: ${noDi.join(', ')}`);
-    }
-
-    if (problems.length) {
-      for (const p of problems) lines.push(`  ✗ ${p}`);
-    } else {
-      lines.push('  all checks passed ✓');
-    }
-  } catch (err) {
-    lines.push(`  check failed: ${err.message}`);
-  }
-  lines.push('');
-
-  // ── definitions ──
-  try {
-    const defs = bpmnModeler.getDefinitions();
-    lines.push('--- Definitions ---');
-    lines.push(`  id: ${defs.id}`);
-    lines.push(`  targetNamespace: ${defs.get('targetNamespace')}`);
-    lines.push(`  exporter: ${defs.get('exporter') || '(none)'}`);
-    lines.push(`  rootElements: ${(defs.rootElements || []).map(re => re.$type).join(', ')}`);
-  } catch (err) {
-    lines.push(`--- Definitions Error: ${err.message} ---`);
-  }
-
-  // ── copy to clipboard ──
-  const text = lines.join('\n');
-  await copyTextToClipboard(text);
-
-  setStatus(`诊断信息已复制到剪贴板（${elementCount} 个元素）`);
-}
-
-$('#btn-diagnostic').addEventListener('click', copyDiagnosticInfo);
+$('#btn-diagnostic').addEventListener('click', diagnostics.copy);
 $('#btn-theme').addEventListener('click', toggleTheme);
 
 // browser file open fallback
