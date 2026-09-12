@@ -57,6 +57,9 @@ import TokenSimulationModule from 'bpmn-js-token-simulation';
 import { controlModule, studioControlModule, studioModdle, cleanupDanglingDefaultFlows } from './control/index.js';
 import { runStudioChecks, regenerateCamundaMapping, modelViewFromModeler } from './control/index.js';
 
+// XML 面板（渲染/高亮/编辑态/脱离模式）—— 从本文件抽出的 M2 视图模块
+import { createXmlView } from './ui/xml-view.js';
+
 // package versions (reported by the diagnostics clipboard payload)
 import bpmnJsPkg from 'bpmn-js/package.json';
 import bpmnJsBpmnlintPkg from 'bpmn-js-bpmnlint/package.json';
@@ -265,10 +268,6 @@ let isDirty = false;
 let lintVisible = false; // 初始与 #lint-panel.hidden 一致（旧值 true 会让首击无效——面板本就隐藏）
 let studioCheckVisible = false; // 参数检查面板（B2 studio 体系）
 let simulateMode = false;
-let xmlVisible = false;
-let xmlEditing = false;
-let xmlDetached = false; // XML 视图处于「脱离模型」只读态（展示导入失败的原始内容）
-let currentXml = '';
 
 // --- DMN state -----------------------------------------------------------
 let editorMode = 'bpmn';  // 'bpmn' | 'dmn'
@@ -627,8 +626,7 @@ function destroyModeler() {
   $('#btn-minimap').classList.remove('active');
   // Fix 3/11：模型销毁时退出 XML 面板编辑态并清残留选中信息——否则旧图的编辑态
   // 内容会被 Apply 进新图，且状态栏挂着已销毁模型的元素 id
-  if (xmlEditing) setXmlEditMode(false);
-  xmlDetached = false;
+  xmlView.resetState();
   els.statusRight.textContent = '';
   editorMode = 'bpmn';
 }
@@ -660,8 +658,7 @@ function destroyDmnEditor() {
   currentDmnView = 'drd';
   currentDmnViewKey = null;
   // Fix 3/11：同 destroyModeler——退出 XML 编辑态，清选中信息残留
-  if (xmlEditing) setXmlEditMode(false);
-  xmlDetached = false;
+  xmlView.resetState();
   els.statusRight.textContent = '';
 }
 
@@ -728,7 +725,7 @@ function bindDmnModelerEvents(modeler) {
       // DMN 无跨视图统一命令栈，撤销回保存点不会自动清除星号（BPMN 侧是精确的）。
       // 基线在 setDmnDiagram 导入时播种，null 守卫仅作启动期安全网（v0.1.10）
       if (lastSavedXML !== null) setDirty(true);
-      if (xmlVisible) debouncedXmlRefresh();
+      if (xmlView.isVisible()) debouncedXmlRefresh();
     });
   });
 }
@@ -1004,7 +1001,7 @@ async function rollbackAfterFailedModeSwitch(snapshot) {
       await rebaseDirtyAfterRestore();
       updateTitle();
     }
-    if (xmlVisible) await refreshXmlView();
+    if (xmlView.isVisible()) await xmlView.refresh();
     setZoomStatus();
   } catch (rbErr) {
     console.error('rollback after failed mode switch failed', rbErr);
@@ -1065,8 +1062,8 @@ async function setDmnDiagram(xml, name, filePath) {
 
   // Fix 3：内容已被整体替换 → 必须退出编辑态，否则面板停留在旧图编辑缓冲里等待
   // Apply（同模式 open/新建不走 destroyModeler，仅靠销毁路径兜不住）
-  if (xmlEditing) setXmlEditMode(false);
-  if (xmlVisible) refreshXmlView();
+  if (xmlView.isEditing()) xmlView.setEditMode(false);
+  if (xmlView.isVisible()) xmlView.refresh();
 }
 
 /** 当前 BPMN/DMN 模型的 XML 快照（失败恢复用）；无模型时返回 null */
@@ -1213,8 +1210,8 @@ async function setBpmnDiagram(xml, name, filePath) {
   pushViewChecks();
 
   // Fix 3：同 setDmnDiagram——内容已替换，旧图的编辑缓冲不得残留可 Apply 的编辑态
-  if (xmlEditing) setXmlEditMode(false);
-  if (xmlVisible) refreshXmlView();
+  if (xmlView.isEditing()) xmlView.setEditMode(false);
+  if (xmlView.isVisible()) xmlView.refresh();
 }
 
 /** 有未保存变更时先确认是否放弃；返回 false 表示用户取消当前操作（v0.1.10 数据丢失修复） */
@@ -1865,279 +1862,27 @@ function hideInfoModal() {
   els.infoModal.classList.add('hidden');
 }
 
-// --- XML view (full diagram XML + selection highlight) ----------------------------
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+// --- XML view (moved to src/ui/xml-view.js — M2) -----------------------------------
+// 面板渲染、语法高亮、选中定位、编辑态与脱离模式全部在模块内；此处只实例化并接线。
+// 模块自持 xml/visible/editing/detached 状态，不再读写本文件的模块级变量。
+// 「应用修改」（applyXmlEditsInner）留在本文件：那是改模型的命令，依赖 modeler/
+// 平台预检/脏标记等编辑器机械，不属于视图层；它经 getEditedXml() 取编辑缓冲。
+const xmlView = createXmlView({
+  els,
+  $,
+  activeService,
+  getActiveModeler,
+  saveActiveXml,
+  copyTextToClipboard,
+  // 导入失败原文与解析位置仍由本文件的 showError/hideError 维护
+  getLastFailed: () => ({ xml: lastFailedXml, location: lastFailedLocation }),
+  hideError
+});
 
-/** syntax-highlight one escaped XML tag string */
-function highlightTag(tag) {
-  let out = '';
-  const name = tag.match(/^<\/?[^\s/>]+/);
-  if (name) {
-    out += `<span class="xml-tag">${name[0]}</span>`;
-  }
-  const rest = tag.slice(name ? name[0].length : 0);
-  let last = 0;
-  const attrRe = /([\w:.-]+)=("[^"]*"|'[^']*')/g;
-  let m;
-  while ((m = attrRe.exec(rest))) {
-    out += `<span class="xml-punc">${rest.slice(last, m.index)}</span>`;
-    out += `<span class="xml-attr">${m[1]}</span>`;
-    out += `<span class="xml-punc">=</span>`;
-    out += `<span class="xml-str">${m[2]}</span>`;
-    last = attrRe.lastIndex;
-  }
-  out += `<span class="xml-tag">${rest.slice(last)}</span>`;
-  return out;
-}
-
-/** syntax-highlight a snippet of raw XML; returns HTML */
-function highlightXml(text) {
-  let out = '';
-  let i = 0;
-  const n = text.length;
-  while (i < n) {
-    const lt = text.indexOf('<', i);
-    if (lt === -1) {
-      out += escapeHtml(text.slice(i));
-      break;
-    }
-    out += escapeHtml(text.slice(i, lt));
-
-    if (text.startsWith('<!--', lt)) {
-      const end = text.indexOf('-->', lt + 4);
-      const stop = end === -1 ? n : end + 3;
-      out += `<span class="xml-comment">${escapeHtml(text.slice(lt, stop))}</span>`;
-      i = stop;
-    } else if (text.startsWith('<?', lt)) {
-      const end = text.indexOf('?>', lt + 2);
-      const stop = end === -1 ? n : end + 2;
-      out += `<span class="xml-pi">${escapeHtml(text.slice(lt, stop))}</span>`;
-      i = stop;
-    } else {
-      // scan to the end of the tag, quotes-aware
-      let end = lt + 1;
-      let quote = null;
-      while (end < n) {
-        const c = text[end];
-        if (quote) {
-          if (c === quote) quote = null;
-        } else if (c === '"' || c === "'") quote = c;
-        else if (c === '>') break;
-        end++;
-      }
-      const stop = Math.min(end + 1, n);
-      out += highlightTag(escapeHtml(text.slice(lt, stop)));
-      i = stop;
-    }
-  }
-  return out;
-}
-
-function escapeRegExp(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** locate the span [start,end) of the tag that opens with id=… / bpmnElement=… */
-function findElementSpans(xml, id) {
-  const spans = [];
-  const re = new RegExp(
-    `(<[^!?][^>]*?\\b(?:id|bpmnElement)\\s*=\\s*["']${escapeRegExp(id)}["'][^>]*>)`,
-    'g'
-  );
-  let m;
-  while ((m = re.exec(xml))) {
-    const openStart = m.index;
-    const openEnd = openStart + m[1].length;
-    const selfClosing = /\/\s*>$/.test(m[1]);
-    const end = selfClosing ? openEnd : findTagEnd(xml, openEnd, m[1].match(/^<([^\s/>]+)/)[1]);
-    spans.push({
-      start: openStart,
-      end,
-      kind: /bpmnElement/.test(m[1]) ? 'di' : 'semantic'
-    });
-  }
-  return spans;
-}
-
-/** find the end offset of `name` element starting right after its opening tag */
-function findTagEnd(xml, fromIndex, name) {
-  const re = new RegExp(`<(/?)\\s*${escapeRegExp(name)}\\b([^>]*)>`, 'g');
-  re.lastIndex = fromIndex;
-  let depth = 1;
-  let m;
-  while ((m = re.exec(xml))) {
-    const closing = m[1] === '/';
-    const selfClose = /\/\s*$/.test(m[2]);
-    if (closing) {
-      depth--;
-      if (depth === 0) return re.lastIndex;
-    } else if (!selfClose) {
-      depth++;
-    }
-  }
-  return xml.length;
-}
-
-function setXmlStatus(text) {
-  els.xmlStatus.textContent = text;
-}
-
-function renderXmlView(spans) {
-  const xml = currentXml;
-  let html = '';
-  let last = 0;
-  let markIndex = 0;
-  const ordered = spans.slice().sort((a, b) => a.start - b.start);
-  for (const s of ordered) {
-    if (s.start < last) continue;
-    html += highlightXml(xml.slice(last, s.start));
-    const cls = `xml-match${s.kind === 'di' ? ' di' : ''}${markIndex === 0 ? ' current' : ''}`;
-    html += `<mark class="${cls}" data-kind="${s.kind}">${highlightXml(xml.slice(s.start, s.end))}</mark>`;
-    last = s.end;
-    markIndex++;
-  }
-  html += highlightXml(xml.slice(last));
-  els.xmlCode.innerHTML = html;
-}
-
-function getCurrentSelection() {
-  try {
-    const selection = activeService('selection');
-    return selection ? (selection.get() || []) : [];
-  } catch {
-    return [];
-  }
-}
-
-function applyXmlSelection(selection) {
-  if (xmlDetached || !xmlVisible || !currentXml || xmlEditing) return;
-  const ids = (selection || [])
-    .map((el) => el && el.businessObject && el.businessObject.id)
-    .filter(Boolean);
-  if (!ids.length) {
-    renderXmlView([]);
-    setXmlStatus('未选中元素 — 在画布中选择一个节点/连线以定位其 XML 段落');
-    return;
-  }
-  const spans = [];
-  for (const id of new Set(ids)) {
-    spans.push(...findElementSpans(currentXml, id));
-  }
-  renderXmlView(spans);
-
-  const labels = [];
-  if (spans.some((s) => s.kind === 'semantic')) labels.push('模型定义');
-  if (spans.some((s) => s.kind === 'di')) labels.push('图形定义 (DI)');
-  setXmlStatus(`已选中 ${ids.join(', ')} → 高亮 ${spans.length} 段（${labels.join(' + ') || '未找到'}）`);
-
-  if (els.xmlAutoscroll.checked) {
-    const mark = els.xmlCode.querySelector('mark.xml-match');
-    if (mark && els.xmlViewer) {
-      const mr = mark.getBoundingClientRect();
-      const vr = els.xmlViewer.getBoundingClientRect();
-      els.xmlViewer.scrollTop += mr.top - vr.top - els.xmlViewer.clientHeight / 2;
-    }
-  }
-}
-
-/** 行级高亮渲染（用于「查看导入失败的原始 XML」的脱离模式） */
-function renderXmlViewAtLine(line) {
-  const linesContent = String(currentXml || '').split('\n');
-  const errIdx = Math.min(Math.max(0, (line || 1) - 1), Math.max(0, linesContent.length - 1));
-  els.xmlCode.innerHTML = linesContent
-    .map((l, i) =>
-      i === errIdx ? `<mark class="xml-err-line">${highlightXml(l)}</mark>` : highlightXml(l)
-    )
-    .join('\n');
-}
-
-/** 在 XML 视图中以脱离模式展示导入失败的原始内容并高亮出错行 */
-function viewFailedXmlInXmlView() {
-  if (!lastFailedXml) return;
-  currentXml = lastFailedXml;
-  xmlDetached = true;
-  xmlVisible = true;
-  els.xmlPanel.classList.remove('hidden');
-  $('#btn-xml').classList.add('active');
-  hideError();
-  if (lastFailedLocation && lastFailedLocation.line) {
-    renderXmlViewAtLine(lastFailedLocation.line);
-    setXmlStatus(`已显示导入失败的原始 XML — 第 ${lastFailedLocation.line} 行（第 ${lastFailedLocation.column} 列）出错（非当前模型内容）`);
-  } else {
-    renderXmlView([]);
-    setXmlStatus('已显示导入失败的原始 XML（非当前模型内容）');
-  }
-  if (els.xmlViewer) els.xmlViewer.scrollTop = 0;
-}
-
-async function refreshXmlView() {
-  // 任何一次模型同步刷新都退出「脱离模式」，恢复 XML 视图镜像活模型语义
-  xmlDetached = false;
-  if (!xmlVisible || xmlEditing) return;
-  if (!getActiveModeler()) return;
-  try {
-    const xml = await saveActiveXml();
-    if (xml === null) return;
-    currentXml = xml;
-    applyXmlSelection(getCurrentSelection());
-  } catch (err) {
-    console.warn('refreshXmlView failed', err);
-    setXmlStatus('XML 生成失败：' + (err.message || err));
-  }
-}
-
-/** XML 面板开启时的模型同步刷新（节流沉淀高频命令事件，BPMN/DMN 共用） */
-const debouncedXmlRefresh = debounce(() => {
-  if (xmlVisible) refreshXmlView();
-}, 500);
-
-async function toggleXmlView() {
-  xmlVisible = !xmlVisible;
-  els.xmlPanel.classList.toggle('hidden', !xmlVisible);
-  $('#btn-xml').classList.toggle('active', xmlVisible);
-  if (xmlVisible) {
-    await refreshXmlView();
-  }
-}
-
-async function copyXml() {
-  if (!currentXml) return;
-  await copyTextToClipboard(currentXml);
-  setXmlStatus('完整 XML 已复制到剪贴板');
-}
-
-// --- XML editing (contenteditable on #xml-code) -----------------------------
-function setXmlEditMode(editing) {
-  if (editing === xmlEditing) return;
-  xmlEditing = editing;
-
-  els.xmlCode.contentEditable = editing ? 'true' : 'false';
-  els.xmlCode.classList.toggle('xml-editable', editing);
-  $('#btn-xml-edit').classList.toggle('active', editing);
-  $('#btn-xml-apply').classList.toggle('hidden', !editing);
-  $('#btn-xml-revert').classList.toggle('hidden', !editing);
-  $('#btn-xml-copy').classList.toggle('hidden', editing);
-
-  if (editing) {
-    setXmlStatus('编辑模式 — 直接修改高亮区域中的文本，Ctrl+Enter 或「应用修改」重新导入，Esc 放弃');
-    els.xmlCode.focus();
-  } else {
-    applyXmlSelection(getCurrentSelection());
-    setXmlStatus('已退出编辑模式');
-  }
-}
-
-function getEditedXml() {
-  return els.xmlCode.textContent;
-}
+const debouncedXmlRefresh = xmlView.debouncedRefresh;
 
 async function applyXmlEditsInner() {
-  const editedXml = getEditedXml();
+  const editedXml = xmlView.getEditedXml();
   if (!editedXml.trim()) {
     showError({ title: 'XML 内容为空', message: '内容为空，无法应用。' });
     return;
@@ -2206,11 +1951,11 @@ async function applyXmlEditsInner() {
     setStatus(isDmn ? '已应用 XML 修改（DMN）' : '已应用 XML 修改（' + (PLATFORMS[currentPlatform] && PLATFORMS[currentPlatform].label) + ')');
     updateTitle();
 
-    setXmlEditMode(false);
-    await refreshXmlView();
+    xmlView.setEditMode(false);
+    await xmlView.refresh();
     const fitCanvas = isDmn ? dmnGet('canvas') : modeler.get('canvas');
     if (fitCanvas) fitCanvas.zoom('fit-viewport', 'auto');
-    setXmlStatus('修改已应用并重新导入模型');
+    xmlView.setStatus('修改已应用并重新导入模型');
   } catch (err) {
     console.error(err);
     showError({
@@ -2256,7 +2001,7 @@ function bindModelerEvents(modeler) {
     } else {
       els.statusRight.textContent = '';
     }
-    if (xmlVisible) applyXmlSelection(event.newSelection || []);
+    xmlView.applySelection(event.newSelection || []);
   });
 
   modeler.on('canvas.viewbox.changed', debounce(setZoomStatus, 100));
@@ -2742,16 +2487,16 @@ $('#btn-lint-close').addEventListener('click', toggleLintPanel);
 $('#btn-studio-check').addEventListener('click', toggleStudioCheckPanel);
 $('#btn-studio-check-close').addEventListener('click', toggleStudioCheckPanel);
 $('#btn-info').addEventListener('click', openMetadataDialog);
-$('#btn-xml').addEventListener('click', toggleXmlView);
-$('#btn-xml-copy').addEventListener('click', copyXml);
-$('#btn-xml-close').addEventListener('click', toggleXmlView);
-$('#btn-xml-edit').addEventListener('click', () => setXmlEditMode(!xmlEditing));
+$('#btn-xml').addEventListener('click', xmlView.toggle);
+$('#btn-xml-copy').addEventListener('click', xmlView.copy);
+$('#btn-xml-close').addEventListener('click', xmlView.toggle);
+$('#btn-xml-edit').addEventListener('click', () => xmlView.setEditMode(!xmlView.isEditing()));
 $('#btn-xml-apply').addEventListener('click', applyXmlEdits);
-$('#btn-xml-revert').addEventListener('click', () => setXmlEditMode(false));
+$('#btn-xml-revert').addEventListener('click', () => xmlView.setEditMode(false));
 els.xmlCode.addEventListener('paste', (e) => {
   // Fix 18：粘贴强制纯文本——阻断 contenteditable 引入富文本/HTML 结构节点，
   // 保证 getEditedXml()（textContent 取文本）拿到的就是用户看到的字符流
-  if (!xmlEditing) return;
+  if (!xmlView.isEditing()) return;
   e.preventDefault();
   const text = (e.clipboardData || window.clipboardData).getData('text/plain');
   document.execCommand('insertText', false, text);
@@ -2763,8 +2508,8 @@ els.xmlCode.addEventListener('keydown', (e) => {
     applyXmlEdits();
   } else if (e.key === 'Escape') {
     e.preventDefault();
-    setXmlEditMode(false);
-  } else if (e.key === 'Enter' && xmlEditing) {
+    xmlView.setEditMode(false);
+  } else if (e.key === 'Enter' && xmlView.isEditing()) {
     e.preventDefault();
     // Insert a newline character at the cursor position
     document.execCommand('insertText', false, '\n');
@@ -2774,7 +2519,7 @@ els.xmlCode.addEventListener('keydown', (e) => {
 // error overlay / notice bar
 $('#btn-error-close').addEventListener('click', hideError);
 $('#btn-error-copy').addEventListener('click', copyError);
-$('#btn-error-view-xml').addEventListener('click', viewFailedXmlInXmlView);
+$('#btn-error-view-xml').addEventListener('click', xmlView.showFailedXml);
 $('#btn-notice-close').addEventListener('click', hideNotice);
 $('#btn-notice-details').addEventListener('click', () => {
   const warnings = els.noticeBar._warnings || [];

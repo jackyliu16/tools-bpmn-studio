@@ -7,13 +7,14 @@
  *
  * 当前覆盖：
  *   - electron/doc-links.cjs —— 极简 Markdown → HTML（安全敏感：注入面）+ 文档白名单
+ *   - src/ui/xml-view.js    —— escapeHtml / highlightXml / findElementSpans（M2 抽出）
  *
  * 随抽取阶段扩展（见 PLAN S5/S7）：
- *   - src/ui/xml-view.js   —— escapeHtml / highlightXml / findElementSpans
  *   - src/diagnostics.js   —— formatDiagnostics
  */
 import { createRequire } from 'node:module';
 
+import { createXmlView } from '../../src/ui/xml-view.js';
 import { createTester } from '../lib/testkit.mjs';
 
 const require = createRequire(import.meta.url);
@@ -107,6 +108,83 @@ const { check, finish } = createTester();
     docLinks.relToGithubUrl('camunda/implementation.js') === camundaUrl);
   check('relToGithubUrl: 未知前缀 → null', docLinks.relToGithubUrl('other/x.md') === null);
   check('relToGithubUrl: 空输入 → null', docLinks.relToGithubUrl('') === null && docLinks.relToGithubUrl(null) === null);
+}
+
+// ── src/ui/xml-view.js :: 纯函数（M2 抽出的安全网）───────────────────────────
+// createXmlView 的纯函数不触碰 deps，用最小 stub 即可在无 DOM 环境下取得。
+{
+  const view = createXmlView({
+    els: {},
+    $: () => null,
+    activeService: () => null,
+    getActiveModeler: () => null,
+    saveActiveXml: async () => null,
+    copyTextToClipboard: async () => {},
+    getLastFailed: () => ({ xml: null, location: null }),
+    hideError: () => {}
+  });
+  const { escapeHtml, highlightXml, findElementSpans } = view;
+
+  check('xmlView: 导出了 escapeHtml/highlightXml/findElementSpans',
+    typeof escapeHtml === 'function' && typeof highlightXml === 'function' && typeof findElementSpans === 'function');
+
+  check('xmlView.escapeHtml: 转义 & < >（引号不转义，用于文本上下文）',
+    escapeHtml('<a & "b">') === '&lt;a &amp; "b"&gt;');
+
+  check('xmlView.highlightXml: 纯文本原样输出', highlightXml('hello') === 'hello');
+
+  const tag = highlightXml('<a b="c">');
+  // 注意：escapeHtml 先于 highlightTag，`<` 已被转义 → 标签名分支匹配不到，
+  // 标签名前缀落到 xml-punc。这是重构前的既有可能行为（非本次引入），单元测试
+  // 把它锁住，避免后续无意改变高亮外观。
+  check('xmlView.highlightXml: 标签前缀/属性名/属性值/闭合部分分别着色',
+    tag.includes('xml-punc">&lt;a </span>') && tag.includes('xml-attr">b</span>') &&
+    tag.includes('xml-str">"c"</span>') && tag.includes('xml-tag">&gt;</span>'));
+
+  const comment = highlightXml('<!-- x -->');
+  check('xmlView.highlightXml: 注释整体着色且转义',
+    comment.includes('xml-comment') && comment.includes('&lt;!-- x --&gt;') && !/<[!]/.test(comment));
+
+  const pi = highlightXml('<?xml version="1.0"?>');
+  check('xmlView.highlightXml: 处理指令整体着色', pi.includes('xml-pi') && pi.includes('&lt;?xml'));
+
+  const ltText = highlightXml('a < b');
+  check('xmlView.highlightXml: 非标签的 < 不破坏输出（无裸露标签）',
+    ltText.startsWith('a ') && ltText.includes('&lt;') && !/<a /.test(ltText));
+
+  // 标签扫描必须 quote-aware：引号内的 > 不得提前结束标签
+  const quoted = highlightXml('<a b="x>y">');
+  check('xmlView.highlightXml: 引号内的 > 不提前结束标签',
+    quoted.includes('xml-str">"x&gt;y"</span>') && (quoted.match(/xml-tag">&gt;/g) || []).length === 1);
+
+  check('xmlView.highlightXml: 未闭合标签容错', highlightXml('<a').includes('&lt;a'));
+
+  // ── findElementSpans ────────────────────────────────────────────────────
+  const semXml = '<bpmn:process id="P1"><bpmn:task id="T1"/></bpmn:process>';
+  const sem = findElementSpans(semXml, 'T1');
+  check('xmlView.findElementSpans: 语义段（自闭合）范围与 kind',
+    sem.length === 1 && sem[0].kind === 'semantic' && semXml.slice(sem[0].start, sem[0].end) === '<bpmn:task id="T1"/>');
+
+  const diXml = '<bpmndi:BPMNShape id="S1" bpmnElement="T1"><dc:Bounds/></bpmndi:BPMNShape>';
+  const di = findElementSpans(diXml, 'T1');
+  check('xmlView.findElementSpans: bpmnElement 匹配判为 DI 段且含子元素整段',
+    di.length === 1 && di[0].kind === 'di' && diXml.slice(di[0].start, di[0].end) === diXml);
+
+  check('xmlView.findElementSpans: 不存在的 id → 空数组', findElementSpans(semXml, 'NOPE').length === 0);
+
+  check('xmlView.findElementSpans: 重复 id → 多段',
+    findElementSpans('<a id="X"/><a id="X"/>', 'X').length === 2);
+
+  const nested = '<a id="P1"><a id="C1"></a></a>';
+  const nestSpans = findElementSpans(nested, 'P1');
+  check('xmlView.findElementSpans: 嵌套同名元素时取到真正的闭合位置',
+    nestSpans.length === 1 && nested.slice(nestSpans[0].start, nestSpans[0].end) === nested);
+
+  check('xmlView.findElementSpans: 单引号属性值同样可识别',
+    findElementSpans("<a id='Q1'/>", 'Q1').length === 1);
+
+  check('xmlView.findElementSpans: 正则元字符 id 不误匹配（转义正确）',
+    findElementSpans('<a id="x.y"/>', 'x.y').length === 1 && findElementSpans('<a id="xzy"/>', 'x.y').length === 0);
 }
 
 process.exit(finish('unit-render-units checks'));
