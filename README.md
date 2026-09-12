@@ -161,25 +161,28 @@ release/win-unpacked/                  # 免安装目录（可直接双击运行
 
 ## 5. 验证记录 (Verification)
 
-本项目在本机（NixOS 容器环境）完成了以下验证：
+回归测试分三层，可由 `scripts/verify/run-all.mjs` 统一编排：
 
-- **渲染进程冒烟测试（44/44 通过）** — `npm run test:smoke`
-  - 纯 BPMN：导入零告警、渲染元素、8 个扩展服务（属性面板/小地图/校验/模拟/搜索/着色）全部可用、XML 往返
-  - Camunda 7：`camunda:modelerTemplate` 属性读取与回写、`camundaPlatformPropertiesProvider` 注册
-  - Camunda 8：`zeebe:taskDefinition` 读取与回写、`zeebePropertiesProvider` 注册
-  - DMN DRD：导入、DRD 视图渲染、Decision Table 视图切换、视图切换往返
-  - DMN 编辑器模块：`createDmnModeler` 导出、`EMPTY_DMN_XML` 模板、definitions 加载
-  - bpmnlint 打包配置（`{ config, resolver }`）由 `bpmn-js-bpmnlint` 正确消费
-  - 冒烟测试用 jsdom 在 Node 中运行真实模块（`vite-node`），不需要浏览器/显示器
+| 层 | 命令 | 内容 | 前置 |
+| --- | --- | --- | --- |
+| 渲染冒烟 | `npm run test:smoke` | **45 项断言**：纯 BPMN / Camunda 7 / Camunda 8 / DMN 的导入零告警、元素渲染、8 个扩展服务（属性面板/小地图/校验/模拟/搜索/着色）可用、XML 往返、属性 provider 注册、bpmnlint 打包配置消费 | 无（Node + jsdom，经 `vite-node` 运行真实模块，不需浏览器/显示器） |
+| 纯逻辑套件 | `npm run test:verify` | **5 个套件 / 79 项断言**：studio 参数体系单测（描述符往返/双写命令/漂移/投影/检查规则）、规则文档路径映射、`electron/doc-links.cjs` 的 Markdown→HTML 注入面与 URL 白名单、lint 反向引用与 DI-label 误报回归 | 无 |
+| 全量回归 | `npm run test:verify:all` | **12 个套件 / 201 项断言**：在纯逻辑套件之上叠加 7 个 **AppImage + Xvfb + CDP** 端到端套件 | 已构建的 AppImage（`./build-head.sh --electron --targets AppImage`）与 `Xvfb` |
+
+端到端套件在**真实打包产物**中驱动 UI（`--appimage-extract-and-run --no-sandbox --ozone-platform=x11`，经 CDP WebSocket 断言），覆盖：缩放（BPMN/DMN 相对缩放、DMN 视图切换后标签同步）、脏标记与关窗守卫、Sprint 3 并发锁与失败回滚、控制要素面板（Camunda 字段/默认流/条件/lint 联动/悬空清理）、studio 参数体系双写与原子 undo、顶部栏分级压缩、规则文档在线/离线降级。
+
+`run-all.mjs` 负责：递归定位 AppImage（`release/**/*.AppImage`，兼容 `build-head.sh` 与 electron-builder 两种布局）、逐套件注入唯一 `VERIFY_DISPLAY`（避免同号 Xvfb 锁残留互踩）、顺序执行与超时 kill、每套件原始输出落 `verify-logs/`；任一失败即整体退出 1。
+
+> `scripts/diagnostics/` 下另有 4 个**非门禁**的一次性复现脚本（v0.1.9 审计期遗留，无断言或已失效），不参与 CI，详见该目录 README。
+
 - **Web 构建与托管** — `vite build` 产出自包含 `dist/`（相对路径），`vite preview` + 静态服务器均 200
-- **桌面打包** — electron-builder 产出 `release/`：AppImage（约 108 MB）、deb、tar.gz；`app.asar` 内含
+- **桌面打包** — electron-builder 产出 `release/`：AppImage（约 135 MB）、deb、tar.gz；`app.asar` 内含
   `dist/` + Electron 主进程/预加载脚本
+- **CI** — [`.github/workflows/ci.yml`](.github/workflows/ci.yml)（master push / PR）跑 lint → build → smoke → 纯逻辑套件 → AppImage → 全量 E2E；[`.github/workflows/release.yml`](.github/workflows/release.yml)（tag）在 Linux 打包后追加同一套全量门禁与规则文档完整性校验
 
-> ⚠️ 本开发容器无法运行 Chromium（内核级 seccomp 在浏览器进程初始化处投递 `SIGTRAP`，与项目本身无关），
-> 因此 `Electron` 窗口的 GUI 运行请在**普通 Linux 桌面 / Windows / macOS** 上验证：
-> `npm run electron:dev`（开发）或直接运行 `release/` 中打包好的应用。
-> 仓库还附带 `electron/verify.cjs`（`npx electron electron/verify.cjs`），会在真实 Electron 中加载应用、
-> 检查画布/调色板/属性面板/小地图并截图到 `/tmp/bpmn-studio-shot.png` 后退出。
+> `electron/verify.cjs`（`npx electron electron/verify.cjs`）可在**普通 Linux 桌面 / Windows / macOS**
+> 上加载真实窗口、检查画布/调色板/属性面板/小地图并截图到 `/tmp/bpmn-studio-shot.png` 后退出；
+> 无显示器的环境走上面的 AppImage + Xvfb + CDP 路径。
 
 ---
 
@@ -202,8 +205,9 @@ git push origin master --tags
 
 1. **版本预检** — tag 必须等于 `v` + `package.json` 的 `version`，不一致立即失败
 2. **构建** — `npm run build`（lint:pack → vite build）生成 Web 产物 `dist/`
-3. **冒烟测试** — `npm run test:smoke`（Node + jsdom，纯 BPMN / Camunda 7 / Camunda 8 / DMN 四场景 44 项断言）
+3. **冒烟测试** — `npm run test:smoke`（Node + jsdom，纯 BPMN / Camunda 7 / Camunda 8 / DMN 四场景 45 项断言）
 4. **桌面打包** — electron-builder 打包 Linux（AppImage / deb / tar.gz）与 Windows（NSIS exe / zip），`--publish never`（统一由本流水线发布，与 `build-tag.sh` 一致）
+4.5. **全量回归（仅 Linux）** — 打包完成后跑 `npm run test:verify:all`（12 套件，AppImage + Xvfb + CDP），并 `node scripts/fetch-rule-docs.mjs --check` 校验内置规则文档完整性；Windows 侧不接（Xvfb 仅 Linux）
 5. **发布** — 创建 GitHub Release，上传 Web 静态包 + 全部安装包，更新说明取自上一版本 tag 到本次 tag 的提交记录（conventional commit 风格）
 
 前置要求：仓库 **Settings → Actions → General → Workflow permissions** 需设为
@@ -311,12 +315,13 @@ rm -rf release/ dist/
 ## 8. 后续扩展 (Roadmap)
 
 - [x] 集成 **dmn-js** 作为决策建模模块（v0.1.4）
+- [x] i18n（界面中文化）—— 经 `additionalModules` 覆盖 translate 服务，`src/control/zh-labels.js` 覆盖官方属性面板/调色板/context pad 全部标签，未命中回退 diagram-js 原生
+- [x] 主题切换（浅色/深色）—— `ui.theme` 偏好 + `src/dark-theme.css`
 - [ ] **元素模板**（`bpmn-js-element-templates`）+ Camunda 模板 JSON schema
-- [ ] i18n（`bpmn-js-i18n`，界面中文化）
-- [ ] 主题切换（浅色/深色，参考 `bpmn-js-examples/theming`）
 - [ ] 本地历史记录 / 自动恢复（localStorage 草稿）
 - [ ] macOS 签名与公证、Windows 代码签名
 - [ ] 多选属性的批量编辑、注释区（modeling feedback）增强
+- [ ] `ActiveEditorContext` 抽象：以 `editorContext.current` 统一暴露 modeler/命令栈/导出能力，消除 `src/main.js` 中散落的 DMN/BPMN 模式分支（根因级重构，见 `AUDIT-BACKLOG.md`）
 
 ---
 

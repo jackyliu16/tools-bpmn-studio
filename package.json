@@ -5,10 +5,14 @@
   "type": "module",
   "main": "electron/main.cjs",
   "author": {
-    "name": "bpmn-studio",
-    "email": "dev@bpmn-studio.local"
+    "name": "jackyliu16",
+    "url": "https://github.com/jackyliu16"
   },
-  "homepage": "https://github.com/bpmn-studio/bpmn-studio",
+  "homepage": "https://github.com/jackyliu16/tools-bpmn-studio",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jackyliu16/tools-bpmn-studio.git"
+  },
   "license": "MIT",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
@@ -81,7 +85,7 @@
       ],
       "category": "Office",
       "icon": "resources/icon.png",
-      "maintainer": "bpmn-studio <dev@bpmn-studio.local>"
+      "maintainer": "jackyliu16"
     },
     "win": {
       "target": [
