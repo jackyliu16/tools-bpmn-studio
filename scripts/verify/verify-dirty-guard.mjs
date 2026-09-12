@@ -240,6 +240,25 @@ const nameReverted = await waitFor(`(() => {
 check('M2 toolbar undo button drives the active command stack (rename reverted)', nameReverted,
   `before=${rootNameBefore}`);
 
+// --- 9. M3: metadata dialog renders both required sections ---------------------
+// M3 把元数据弹窗抽成 src/ui/metadata-dialog.js；此处在真实产物中断言抽样后
+// 弹窗仍可见且包含预期的两段标题（文件信息 / 图表统计），为重构提供 E2E 安全网。
+await click('#btn-info');
+const metaVisible = await waitFor(`!document.querySelector('#info-modal').classList.contains('hidden')`);
+check('M3 metadata dialog opens (BPMN)', metaVisible);
+
+const metaSections = await evaluate(`(() => {
+  const modal = document.querySelector('#info-modal');
+  if (!modal) return '';
+  return [...modal.querySelectorAll('.info-section h3')].map(h => h.textContent).join('|');
+})()`);
+check('M3 metadata dialog contains 文件信息 and 图表统计 sections',
+  /文件信息/.test(metaSections) && /图表统计/.test(metaSections), metaSections);
+
+await click('#btn-info-close');
+const metaHidden = await waitFor(`document.querySelector('#info-modal').classList.contains('hidden')`);
+check('M3 metadata dialog closes via 关闭 button', metaHidden);
+
 console.log('\n' + results.join('\n'));
 console.log(`\n${failed === 0 ? 'ALL CHECKS PASSED' : failed + ' CHECK(S) FAILED'} (${results.length} total)`);
 
