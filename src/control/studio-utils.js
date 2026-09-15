@@ -268,9 +268,9 @@ export function camundaMatchesStudio(businessObject) {
 /**
  * 作用域变量目录（同步、确定性；路由变量 chips 与 R1/R3 检查共用）。
  *
- * 取 flow 所在进程/子流程作用域内全部活动节点（含嵌套）的出参名（studio 权威 + camunda 合并），
- * 附 studio 类型。与官方 @bpmn-io/extract-process-variables 的语义等价
- * （节点的输出映射即流程变量），但同步且无额外依赖。
+ * 取 flow 所在作用域（进程/子流程）**直接子级**活动节点的出参名（studio 权威 + camunda 合并），
+ * 附 studio 类型。严格作用域局部：子流程内部活动产生的变量不上浮到父作用域
+ * （Camunda 语义下需经输出映射才可见），因此不做祖先/后代穿透。
  *
  * @param {ModdleElement} flowBo 顺序流的 businessObject（取 $parent 为作用域）
  * @param {ModdleElement[]} elementBos 注册表内全部元素的 businessObject
@@ -283,7 +283,7 @@ export function resolveScopeVariablesFor(flowBo, elementBos) {
   const byName = new Map();
   for (const bo of elementBos) {
     if (!bo || typeof bo.$instanceOf !== 'function' || !bo.$instanceOf('bpmn:Activity')) continue;
-    if (!belongsTo(bo, scope)) continue;
+    if (bo.$parent !== scope) continue;
     for (const name of outputNames(bo)) {
       if (!byName.has(name)) {
         byName.set(name, { name, type: studioParamTypeOf(bo, name) });
@@ -291,16 +291,6 @@ export function resolveScopeVariablesFor(flowBo, elementBos) {
     }
   }
   return [...byName.values()];
-}
-
-/** bo 是否属于 scope（自身或嵌套父链命中） */
-function belongsTo(bo, scope) {
-  let cursor = bo;
-  while (cursor) {
-    if (cursor === scope) return true;
-    cursor = cursor.$parent;
-  }
-  return false;
 }
 
 function studioParamTypeOf(bo, name) {

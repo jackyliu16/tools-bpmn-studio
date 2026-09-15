@@ -270,5 +270,37 @@ const FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
   check('R4：studio 侧改名仍判漂移', camundaMatchesStudio(t2) === false);
 }
 
+// --- 作用域目录：子流程内部出参不上浮 ---
+{
+  const NESTED_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:studio="http://bpmn.studio/schema/studio"
+  id="D2" targetNamespace="http://bpmn.io/schema/bpmn">
+  <process id="P2">
+    <subProcess id="Sub1">
+      <task id="Inner"><extensionElements><studio:parameters>
+        <studio:outputParameter name="innerVar" type="string" /></studio:parameters></extensionElements></task>
+      <task id="Inner2" />
+      <sequenceFlow id="F_in" sourceRef="Inner" targetRef="Inner2" />
+    </subProcess>
+    <task id="Top" />
+    <sequenceFlow id="F_top" sourceRef="Sub1" targetRef="Top" />
+  </process>
+</definitions>`;
+  const { rootElement } = await moddle.fromXML(NESTED_FIXTURE);
+  const process = rootElement.rootElements[0];
+  const sub = process.flowElements.find((f) => f.id === 'Sub1');
+  const topFlow = process.flowElements.find((f) => f.id === 'F_top');
+  const innerFlow = sub.flowElements.find((f) => f.id === 'F_in');
+  const allBos = [];
+  const walk = (bo) => { allBos.push(bo); (bo.flowElements || []).forEach(walk); };
+  walk(process);
+
+  const topVars = resolveScopeVariablesFor(topFlow, allBos).map((v) => v.name);
+  const innerVars = resolveScopeVariablesFor(innerFlow, allBos).map((v) => v.name);
+  check('作用域目录：顶层不含子流程内部出参', !topVars.includes('innerVar'), JSON.stringify(topVars));
+  check('作用域目录：子流程内部含内部出参', innerVars.includes('innerVar'), JSON.stringify(innerVars));
+}
+
 // 必须 process.exit —— 裸 finish() 会丢弃返回码，断言全挂时进程仍退出 0（静默绿灯）
 process.exit(finish('studio-param-unit checks'));
