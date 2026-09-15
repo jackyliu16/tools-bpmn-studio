@@ -9,7 +9,7 @@
  *  5. 边参数投影徽标（overlay .studio-flow-badge）
  *  6. 参数检查面板：R1（未声明变量）/ R4（camunda 漂移 + 修复按钮）
  *  7. 保存→重导入往返回显
- *  8. R1 根标识符（成员访问不误报、${} 条件不漏报）
+ *  8. R1 根标识符（成员访问不误报、${} 条件不漏报）+ P6 徽标刷新不误删其它 overlay
  *
  * Usage: node scripts/verify/verify-studio-params.mjs [AppImage]
  */
@@ -268,6 +268,16 @@ await sleep(200);
 await evaluate(`window.__studio.setText('studio-inputParameters-name-0', 'result')`);
 const badgeOk = await waitFor(`window.__studio.badges().some((t) => t.includes('result'))`, 15000);
 check('边参数投影徽标（Flow_2 Task_A→Task_B ⇄ result）', badgeOk, `badges=${JSON.stringify(await evaluate(`window.__studio.badges()`))}`);
+
+// P6：徽标刷新只移除自身 overlay，不得连带删掉同元素上的其它 overlay
+const overlaySurvives = await evaluate(`(() => {
+  const m = window.__bpmnModeler, ov = m.get('overlays'), er = m.get('elementRegistry');
+  const flow = er.get('Flow_2');
+  ov.add(flow, 'verify-foreign', { position: { top: 0, left: 0 }, html: '<div class="verify-foreign-ov">X</div>' });
+  m.get('studioFlowBadge').refresh();
+  return ov.get({ element: flow }).some((o) => o.type === 'verify-foreign');
+})()`);
+check('徽标刷新不误删同元素上的其它 overlay', overlaySurvives === true);
 
 // --- 6. 路由变量 chips → 点击插入条件 ---
 await evaluate(`(() => { const m = window.__bpmnModeler; m.get('selection').select(m.get('elementRegistry').get('Flow_4')); })()`);

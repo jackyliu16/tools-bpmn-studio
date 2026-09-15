@@ -31,8 +31,11 @@ export default function FlowBadge(eventBus, overlays, elementRegistry, canvas) {
       if (!bo || !bo.$instanceOf('bpmn:SequenceFlow')) continue;
       if (element.parent !== root) continue; // 仅当前 plane（塌缩子流程内不渲染）
 
+      // diagram-js 的 add(element, type, overlay) 把第二参存为 type；
+      // remove 必须用 { type } 精确匹配，用 { id } 会因 element 存在而被忽略、
+      // 连带删掉该元素上的其它 overlay。
       const overlayId = OVERLAY_PREFIX + element.id;
-      overlays.remove({ element, id: overlayId });
+      overlays.remove({ element, type: overlayId });
 
       const projection = flowProjectionNames(
         element.source && element.source.businessObject,
@@ -52,7 +55,7 @@ export default function FlowBadge(eventBus, overlays, elementRegistry, canvas) {
   eventBus.on('diagram.clear', () => {
     if (timer) { clearTimeout(timer); timer = null; }
     for (const element of elementRegistry.getAll()) {
-      if (element.waypoints) overlays.remove({ element, id: OVERLAY_PREFIX + element.id });
+      if (element.waypoints) overlays.remove({ element, type: OVERLAY_PREFIX + element.id });
     }
   });
   eventBus.on('diagram.destroy', () => {
