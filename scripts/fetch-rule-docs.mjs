@@ -76,7 +76,10 @@ async function fetchText(url) {
     try {
       const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(TIMEOUT_MS) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.text();
+      const body = await res.text();
+      // 200 但空 body 视为失败：不能把上游异常/代理截断当成"拿到了文档"
+      if (!body.trim()) throw new Error('HTTP 200 但响应为空');
+      return body;
     } catch (err) {
       lastErr = err;
       if (attempt < MAX_ATTEMPTS) {
@@ -142,6 +145,22 @@ async function main() {
   console.log(`规则文档: ${ok.length}/${rules.length} (${pct}%) 已获取，共 ${(totalBytes / 1024).toFixed(1)} KiB → dist/docs/`);
   for (const f of failed) {
     console.warn(`  ✗ ${f.rule}: ${f.error}（离线时该规则回退在线链接）`);
+  }
+
+  // 抓取状态清单：供 verify-rule-docs 等消费者区分「上游确无文档」与「本次网络失败」，
+  // 也让构建产物自带可追溯的 refs/缺失记录。
+  try {
+    await writeFile(
+      path.join(DIST_DOCS, 'fetch-status.json'),
+      JSON.stringify({
+        refs: { bpmnlint: BPMNLINT_REF, camunda: CAMUNDA_REF },
+        ok: ok.map((r) => r.rule).sort(),
+        missing: failed.map((f) => f.rule).sort()
+      }, null, 2) + '\n',
+      'utf-8'
+    );
+  } catch (err) {
+    console.warn(`  fetch-status.json 写入失败: ${err.message}`);
   }
 
   if (process.argv.includes('--check')) {
