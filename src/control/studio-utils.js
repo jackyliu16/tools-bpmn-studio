@@ -253,8 +253,15 @@ export function camundaMatchesStudio(businessObject) {
   if (!io) return false;
   const cIn = (io.get('inputParameters') || []).map((p) => ({ name: p.get('name'), expression: p.get('value') }));
   const cOut = (io.get('outputParameters') || []).map((p) => ({ name: p.get('name'), expression: p.get('value') }));
-  // 空表达式归一化：studio 侧为 ''（未设），camunda 侧为 undefined（无 body）→ 等价
-  const eq = (a, b) => a.length === b.length && a.every((x, i) => x.name === b[i].name && (x.expression || '') === (b[i].expression || ''));
+  // 空表达式归一化：studio 侧为 ''（未设），camunda 侧为 undefined（无 body）→ 等价。
+  // 无序比较：Camunda 语义与参数先后顺序无关，外部工具重排同一集合不应判为漂移。
+  const keyOf = (p) => `${p.name || ''}\u0000${p.expression || ''}`;
+  const eq = (a, b) => {
+    if (a.length !== b.length) return false;
+    const ak = a.map(keyOf).sort();
+    const bk = b.map(keyOf).sort();
+    return ak.every((x, i) => x === bk[i]);
+  };
   return eq(cIn, sIn) && eq(cOut, sOut);
 }
 

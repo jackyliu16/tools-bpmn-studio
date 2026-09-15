@@ -233,5 +233,42 @@ const FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
   check('R1 提取：关键字与纯数字被过滤', ids('totalAmount >= 100') === JSON.stringify(['totalAmount']), ids('totalAmount >= 100'));
 }
 
+// --- R4 一致性：参数顺序无关 ---
+{
+  const ORDER_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+  xmlns:studio="http://bpmn.studio/schema/studio"
+  id="D" targetNamespace="http://bpmn.io/schema/bpmn">
+  <process id="P">
+    <userTask id="T">
+      <extensionElements>
+        <studio:parameters>
+          <studio:inputParameter name="a" type="string" expression="a" />
+          <studio:inputParameter name="b" type="string" expression="b" />
+        </studio:parameters>
+        <camunda:inputOutput>
+          <camunda:inputParameter name="b">b</camunda:inputParameter>
+          <camunda:inputParameter name="a">a</camunda:inputParameter>
+        </camunda:inputOutput>
+      </extensionElements>
+    </userTask>
+  </process>
+</definitions>`;
+  const { rootElement } = await moddle.fromXML(ORDER_FIXTURE);
+  const t = rootElement.rootElements[0].flowElements[0];
+  check('R4：camunda 参数顺序颠倒仍判一致', camundaMatchesStudio(t) === true);
+
+  const io = t.get('extensionElements').get('values').find((v) => v.$instanceOf('camunda:InputOutput'));
+  io.get('inputParameters')[0].set('name', 'renamed');
+  check('R4：参数改名仍判漂移', camundaMatchesStudio(t) === false);
+
+  const { rootElement: r2 } = await moddle.fromXML(ORDER_FIXTURE);
+  const t2 = r2.rootElements[0].flowElements[0];
+  t2.get('extensionElements').get('values')
+    .find((v) => v.$instanceOf('studio:Parameters')).get('inputParameters')[0].set('name', 'a2');
+  check('R4：studio 侧改名仍判漂移', camundaMatchesStudio(t2) === false);
+}
+
 // 必须 process.exit —— 裸 finish() 会丢弃返回码，断言全挂时进程仍退出 0（静默绿灯）
 process.exit(finish('studio-param-unit checks'));
