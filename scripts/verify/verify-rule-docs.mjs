@@ -12,6 +12,7 @@
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 
 import docLinks from '../../electron/doc-links.cjs';
@@ -110,18 +111,37 @@ const { check, finish } = createTester();
   } else {
     const rulesDir = path.join(docsDir, 'rules');
     const camundaDir = path.join(docsDir, 'camunda');
-    const rulesFiles = existsSync(rulesDir) ? readdirSync(rulesDir).filter((f) => f.endsWith('.md')) : [];
-    const camundaFiles = existsSync(camundaDir) ? readdirSync(camundaDir).filter((f) => f.endsWith('.js')) : [];
+    const readDocs = () => ({
+      rulesFiles: existsSync(rulesDir) ? readdirSync(rulesDir).filter((f) => f.endsWith('.md')) : [],
+      camundaFiles: existsSync(camundaDir) ? readdirSync(camundaDir).filter((f) => f.endsWith('.js')) : []
+    });
+    let { rulesFiles, camundaFiles } = readDocs();
 
-    const missing = Object.keys(RULE_LABELS).filter((rule) => {
+    const knownMissing = ['global']; // 上游仓库无独立文档
+    const missingRules = () => Object.keys(RULE_LABELS).filter((rule) => {
       const rel = docLinks.localDocRelPath(rule);
       const file = rel.startsWith('camunda/') ? rel.slice('camunda/'.length) : rel.slice('rules/'.length);
       const inDir = rule.startsWith('camunda/') ? camundaFiles : rulesFiles;
       return !inDir.includes(file);
     });
 
-    const knownMissing = ['global']; // 上游仓库无独立文档
-    const unexpected = missing.filter((r) => !knownMissing.includes(r));
+    let missing = missingRules();
+    let unexpected = missing.filter((r) => !knownMissing.includes(r));
+
+    // 构建期抓取可能因网络抖动缺项（pinned SHA 下上游文档是存在的）：
+    // 先重抓一次再判定，避免把瞬时网络失败当成门禁红灯。
+    if (unexpected.length) {
+      console.log(`[info] dist/docs/ 缺 ${unexpected.length} 项（${unexpected.join(', ')}），尝试重新抓取一次…`);
+      try {
+        execFileSync(process.execPath, [path.join(root, 'scripts', 'fetch-rule-docs.mjs')], { stdio: 'inherit' });
+      } catch (err) {
+        console.warn(`[warn] 重新抓取失败: ${err.message}`);
+      }
+      ({ rulesFiles, camundaFiles } = readDocs());
+      missing = missingRules();
+      unexpected = missing.filter((r) => !knownMissing.includes(r));
+    }
+
     check(
       `dist/docs/ 覆盖全部规则（豁免 ${knownMissing.join(', ')}）`,
       unexpected.length === 0,

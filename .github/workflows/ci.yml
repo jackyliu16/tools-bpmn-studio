@@ -66,6 +66,11 @@ jobs:
       - name: Build web bundle
         run: npm run build
 
+      # 构建会静默容忍单条文档缺失；分支流水线显式校验，避免离线文档能力
+      # 在 CI 中静默降级（与 release.yml 同一步骤）
+      - name: Verify bundled rule docs
+        run: node scripts/fetch-rule-docs.mjs --check
+
       - name: Smoke test
         run: npm run test:smoke
 
