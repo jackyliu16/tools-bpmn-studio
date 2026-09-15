@@ -6,7 +6,7 @@
  *   R3  数值比较条件引用 string 类型变量 → warn（轻量启发式）
  *   R4  camunda:inputOutput 与 studio 参数不一致（漂移/缺失/外部编辑）→ error（可修复）
  *   R5  非活动元素携带 studio 参数（无执行落点）→ info
- *   R6  出参未被任何条件或下游入参消费 → warn
+ *   R6  出参未被本作用域内任何条件或入参消费 → warn
  *
  * runStudioChecks 为纯逻辑（吃一个抽象的“模型视图”），可 node 单测；
  * renderStudioCheck 为 DOM 渲染（main.js 调用）。
@@ -24,6 +24,9 @@ import {
 } from './studio-utils.js';
 
 export const STUDIO_CHECK_RULES = ['R1', 'R3', 'R4', 'R5', 'R6'];
+
+/** 空消费者集合（未登记任何消费者的作用域） */
+const EMPTY_NAMES = new Set();
 
 /**
  * 模型视图抽象：把 modeler 服务收敛成纯数据结构，便于单测。
@@ -50,8 +53,18 @@ export function runStudioChecks(view) {
     return scopeCache.get(key);
   };
 
-  // 全局消费者：条件引用 ∪ 全部活动入参名（R6）
-  const consumers = new Set();
+  // 消费者按作用域归类（R6）：条件引用只消费其 flow 所在作用域；
+  // 活动入参名对其所在作用域及所有祖先作用域算消费（变量向下可见）。
+  const consumersByScope = new Map();
+  const addConsumer = (scope, name) => {
+    if (!scope || !name) return;
+    let set = consumersByScope.get(scope);
+    if (!set) {
+      set = new Set();
+      consumersByScope.set(scope, set);
+    }
+    set.add(name);
+  };
   const conditionRefs = new Map(); // flowId → [identifiers]
   for (const el of view.elements) {
     if (!el.bo) continue;
@@ -60,11 +73,14 @@ export function runStudioChecks(view) {
       if (body) {
         const ids = extractConditionIdentifiers(body);
         conditionRefs.set(el.id, ids);
-        ids.forEach((id) => consumers.add(id));
+        ids.forEach((id) => addConsumer(el.bo.$parent, id));
       }
     }
     if (el.bo.$instanceOf && el.bo.$instanceOf('bpmn:Activity')) {
-      paramList(getStudioParams(el.bo), 'inputParameters').forEach((p) => p.name && consumers.add(p.name));
+      const names = paramList(getStudioParams(el.bo), 'inputParameters').map((p) => p.name).filter(Boolean);
+      for (let scope = el.bo.$parent; scope; scope = scope.$parent) {
+        names.forEach((name) => addConsumer(scope, name));
+      }
     }
   }
 
@@ -120,17 +136,18 @@ export function runStudioChecks(view) {
       });
     }
 
-    // R6：出参无消费
+    // R6：出参无消费（只统计其所在作用域内的消费者）
     if (isStudioActivity(el.bo)) {
       const outputs = paramList(getStudioParams(el.bo), 'outputParameters').filter((p) => p.name);
+      const consumed = consumersByScope.get(el.bo.$parent) || EMPTY_NAMES;
       for (const out of outputs) {
-        if (!consumers.has(out.name)) {
+        if (!consumed.has(out.name)) {
           issues.push({
             id: `R6-${el.id}-${out.name}`,
             elementId: el.id,
             category: 'warn',
             rule: 'R6',
-            message: `出参「${out.name}」未被任何条件或下游入参消费。`
+            message: `出参「${out.name}」未被本作用域内任何条件或入参消费。`
           });
         }
       }

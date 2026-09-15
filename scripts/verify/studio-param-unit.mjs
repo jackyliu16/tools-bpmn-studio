@@ -270,6 +270,39 @@ const FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
   check('R4：studio 侧改名仍判漂移', camundaMatchesStudio(t2) === false);
 }
 
+// --- R6：消费按作用域判定 ---
+{
+  const SCOPE_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:studio="http://bpmn.studio/schema/studio"
+  id="D" targetNamespace="http://bpmn.io/schema/bpmn">
+  <process id="P1">
+    <task id="A"><extensionElements><studio:parameters>
+      <studio:outputParameter name="foo" type="string" /></studio:parameters></extensionElements></task>
+    <task id="B"><extensionElements><studio:parameters>
+      <studio:inputParameter name="foo" type="string" /></studio:parameters></extensionElements></task>
+  </process>
+  <process id="P2">
+    <task id="C"><extensionElements><studio:parameters>
+      <studio:inputParameter name="foo" type="string" /></studio:parameters></extensionElements></task>
+  </process>
+</definitions>`;
+  const viewOf = (rootElement) => ({
+    elements: rootElement.rootElements.flatMap((p) => p.flowElements).map((bo) => ({ id: bo.id, bo, isConnection: false }))
+  });
+
+  const r1 = await moddle.fromXML(SCOPE_FIXTURE);
+  const sameScope = runStudioChecks(viewOf(r1.rootElement));
+  check('R6：同作用域入参消费 → 不报', !sameScope.some((i) => i.rule === 'R6' && i.elementId === 'A'), JSON.stringify(sameScope.filter((i) => i.rule === 'R6')));
+
+  const r2 = await moddle.fromXML(SCOPE_FIXTURE);
+  const p1 = r2.rootElement.rootElements.find((p) => p.id === 'P1');
+  p1.flowElements.find((f) => f.id === 'B').get('extensionElements').get('values')
+    .find((v) => v.$instanceOf('studio:Parameters')).set('inputParameters', []);
+  const crossScope = runStudioChecks(viewOf(r2.rootElement));
+  check('R6：异作用域入参不抑制本作用域告警', crossScope.some((i) => i.rule === 'R6' && i.elementId === 'A'), JSON.stringify(crossScope.filter((i) => i.rule === 'R6')));
+}
+
 // --- 作用域目录：子流程内部出参不上浮 ---
 {
   const NESTED_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
