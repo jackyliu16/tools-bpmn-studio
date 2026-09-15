@@ -113,11 +113,16 @@ console.log(issueKeys.length === 0 || labelKeys.length === 0
 // Also check via linting.completed event
 const eventIssues = await new Promise(resolve => {
   const eb = modeler.get('eventBus');
-  eb.once('linting.completed', ev => resolve(ev.issues));
-  modeler.get('canvas').resized();
-  setTimeout(() => resolve(null), 3000);
+  const timeout = setTimeout(() => resolve(null), 5000);
+  eb.once('linting.completed', ev => { clearTimeout(timeout); resolve(ev.issues); });
+  // 注意：canvas.resized() 不会触发 lint（旧实现因此永远超时而又被当成通过）；
+  // 显式调用 linting.update()（与诊断路径同款）确保事件真的到来。
+  const linting = modeler.get('linting');
+  if (typeof linting.update === 'function') linting.update();
+  else modeler.get('canvas').resized();
 });
 
+const eventTimedOut = eventIssues === null;
 if (eventIssues) {
   const evtLabelKeys = Object.keys(eventIssues).filter(k => k.endsWith('_label'));
   console.log('');
@@ -126,13 +131,19 @@ if (eventIssues) {
   console.log(evtLabelKeys.length === 0
     ? '✅ PASS: linting.completed has no DI-label entries'
     : '❌ FAIL: linting.completed contains DI-label entries');
+} else {
+  // 断言未执行 ≠ 通过：超时本身就是失败（此前的静默假绿路径）
+  console.log('');
+  console.log('❌ FAIL: linting.completed 未在超时内到达（该断言未执行，不得计为通过）');
 }
 
 modeler.destroy();
 // 标准 N/M 汇总行：让 run-all.mjs 能解析计数，与其他套件输出一致
 const total = 2;
+const evtLabelFailed = eventTimedOut ||
+  Object.keys(eventIssues || {}).filter((k) => k.endsWith('_label')).length > 0;
 const failedChecks =
   (labelKeys.length > 0 ? 1 : 0) +
-  (eventIssues && Object.keys(eventIssues).filter((k) => k.endsWith('_label')).length > 0 ? 1 : 0);
+  (evtLabelFailed ? 1 : 0);
 console.log(`\n${total - failedChecks}/${total} verify-patch-e2e checks passed`);
 process.exit(failedChecks ? 1 : 0);
