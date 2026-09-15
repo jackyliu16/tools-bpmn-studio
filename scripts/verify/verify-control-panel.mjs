@@ -211,7 +211,7 @@ const defaultFlowGroupShown = await evaluate(`window.__panel.openGroup('ControlP
 check('「网关默认流」分组渲染并可展开', defaultFlowGroupShown);
 
 const options = await evaluate(`[...document.querySelectorAll('#js-properties-panel [data-entry-id="gatewayDefaultFlow"] select option')].map(o => o.value).join(',')`);
-check('默认出线下拉包含全部出线（Flow_A/Flow_B）', options === 'Flow_A,Flow_B', options);
+check('默认出线下拉包含「（无）」+ 全部出线（Flow_A/Flow_B）', options === ',Flow_A,Flow_B', options);
 
 // --- 3. P2：通过下拉设置默认流 → 落盘 camunda 语义（default 属性） ---------------
 const setDefault = await evaluate(`window.__panel.setSelect('gatewayDefaultFlow', 'Flow_B')`);
@@ -285,6 +285,27 @@ const undoLanded = await waitFor(`(() => {
 check('undo 回退条件表达式（正文消失）', undoLanded);
 xml = await evaluate(`window.__panel.saveXml()`);
 check('undo 后默认流保留（default="Flow_B"）', xml.includes('default="Flow_B"'), xml.includes('default="Flow_B"') ? '' : '默认流也被回退了');
+
+// --- 6.5 P5：默认流可清空（下拉「（无）」） -------------------------------------
+// 此时面板仍停在 Flow_A（步骤 5），先选回网关再操作默认流下拉
+await evaluate(`(() => { const m = window.__bpmnModeler; m.get('selection').select(m.get('elementRegistry').get('Gateway_1')); })()`);
+await sleep(400);
+await evaluate(`window.__panel.openGroup('ControlPanel__GatewayDefaultFlow')`);
+await sleep(200);
+const clearOptionShown = await evaluate(`(() => {
+  const sel = document.querySelector('#js-properties-panel [data-entry-id="gatewayDefaultFlow"] select');
+  return !!sel && [...sel.options].some((o) => o.value === '');
+})()`);
+check('下拉提供空值「（无）」选项（否则设过就回退不了）', clearOptionShown);
+
+const clearSelect = await evaluate(`window.__panel.setSelect('gatewayDefaultFlow', '')`);
+const cleared = await waitFor(`(() => {
+  const gw = window.__bpmnModeler.get('elementRegistry').get('Gateway_1');
+  return !gw.businessObject.default;
+})()`);
+check('选择「（无）」可清空默认流（模型层确认）', clearSelect && cleared);
+xml = await evaluate(`window.__panel.saveXml()`);
+check('清空后 XML 不再含 default 属性', !xml.includes('default="Flow_B"'), xml.includes('default="Flow_B"') ? '残留 default' : '');
 
 // --- 7. P2：删除默认流出线 → 悬空引用自动清理 -----------------------------------
 await evaluate(`(() => {

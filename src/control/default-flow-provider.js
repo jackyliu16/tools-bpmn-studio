@@ -89,7 +89,7 @@ function DefaultFlowEntry({ element, modeling }) {
         },
         getOptions: () => {
           const seen = new Set();
-          return (element.outgoing || [])
+          const flows = (element.outgoing || [])
             .filter((f) => {
               if (seen.has(f.id)) return false;
               seen.add(f.id);
@@ -99,6 +99,9 @@ function DefaultFlowEntry({ element, modeling }) {
               value: f.id,
               label: (f.businessObject && f.businessObject.name) || f.id
             }));
+          // 首项空值 = 「无」：@bpmn-io/properties-panel 的 Select 不会自动补空选项，
+          // 不显式给出就无法把已设的默认流清空。
+          return [{ value: '', label: '（无）' }, ...flows];
         }
       });
     },
