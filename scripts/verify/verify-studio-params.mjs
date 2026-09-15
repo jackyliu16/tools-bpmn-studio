@@ -9,6 +9,7 @@
  *  5. 边参数投影徽标（overlay .studio-flow-badge）
  *  6. 参数检查面板：R1（未声明变量）/ R4（camunda 漂移 + 修复按钮）
  *  7. 保存→重导入往返回显
+ *  8. R1 根标识符（成员访问不误报、${} 条件不漏报）
  *
  * Usage: node scripts/verify/verify-studio-params.mjs [AppImage]
  */
@@ -299,6 +300,17 @@ await sleep(400);
 await evaluate(`window.__studio.setText('conditionExpression', 'ghost_var >= 1')`);
 const r1Shown = await waitFor(`window.__studio.checkList().includes('R1') && window.__studio.checkList().includes('ghost_var')`);
 check('R1：引用未声明变量 → 检查面板 warn', r1Shown, (await evaluate(`window.__studio.checkList()`)).slice(0, 120));
+
+// R1 根标识符：result 已声明（Task_A 出参）→ result.foo 不应报 foo
+await evaluate(`window.__studio.setText('conditionExpression', 'result.foo >= 1')`);
+await sleep(500);
+const r1MemberText = await evaluate(`window.__studio.checkList()`);
+check('R1：成员访问只取根标识符（result.foo 不报 foo）', !/R1/.test(r1MemberText) || !/foo/.test(r1MemberText), r1MemberText.slice(0, 160));
+
+// R1 EL 定界符：${ghost2} 内部的 ghost2 必须被检查（旧实现整段忽略）
+await evaluate('window.__studio.setText("conditionExpression", "${ghost2} >= 1")');
+const r1El = await waitFor(`window.__studio.checkList().includes('R1') && window.__studio.checkList().includes('ghost2')`);
+check('R1：${…} 条件内部标识符同样被检查', r1El, (await evaluate(`window.__studio.checkList()`)).slice(0, 160));
 
 // R4：外部直改 camunda 映射 → 漂移 error + 修复
 await evaluate(`(() => {

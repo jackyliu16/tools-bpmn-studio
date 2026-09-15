@@ -18,6 +18,7 @@ import {
   flowProjectionNames,
   buildStudioWriteCommands,
   resolveScopeVariablesFor,
+  extractConditionIdentifiers,
   paramList
 } from '../../src/control/studio-utils.js';
 import { runStudioChecks } from '../../src/control/studio-check.js';
@@ -220,6 +221,16 @@ const FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
     const issues3 = runStudioChecks(freshView.view);
     check('R3：string 参与数值比较 → warn', issues3.some((i) => i.rule === 'R3' && /label/.test(i.message)), JSON.stringify(issues3.filter((i) => i.rule === 'R3')));
   }
+}
+
+// --- R1 标识符提取：根标识符 + EL 定界符 ---
+{
+  const ids = (s) => JSON.stringify(extractConditionIdentifiers(s));
+  check('R1 提取：成员访问只取根标识符', ids("order.status == 'paid'") === JSON.stringify(['order']), ids("order.status == 'paid'"));
+  check('R1 提取：${…} 保留内部标识符', ids('${amount > 100}') === JSON.stringify(['amount']), ids('${amount > 100}'));
+  check('R1 提取：方法调用只取根标识符', ids('myVar.get("a") == 1') === JSON.stringify(['myVar']), ids('myVar.get("a") == 1'));
+  check('R1 提取：函数调用保留函数名与实参', ids('a(b(c)) > 1') === JSON.stringify(['a', 'b', 'c']), ids('a(b(c)) > 1'));
+  check('R1 提取：关键字与纯数字被过滤', ids('totalAmount >= 100') === JSON.stringify(['totalAmount']), ids('totalAmount >= 100'));
 }
 
 // 必须 process.exit —— 裸 finish() 会丢弃返回码，断言全挂时进程仍退出 0（静默绿灯）

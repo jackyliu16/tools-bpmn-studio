@@ -218,10 +218,22 @@ const CONDITION_KEYWORDS = new Set([
   'is', 'item', 'setVariable', 'getVariable', 'execution', 'task', 'historyService'
 ]);
 
-/** 从条件表达式正文粗提取标识符（字符串/模板/数字/关键字除外） */
+/** 从条件表达式正文粗提取「根标识符」引用（字符串/数字/关键字除外）。
+ *
+ *  - `order.status == 'paid'` → `['order']`（属性/方法段不属于变量引用）
+ *  - `${amount > 100}` / `#{amount > 100}` → `['amount']`（EL 定界符分隔，保留内部）
+ *  - `myVar.get("a") == 1` → `['myVar']`
+ */
 export function extractConditionIdentifiers(body) {
   if (!body || typeof body !== 'string') return [];
-  const cleaned = body.replace(/\$\{[^}]*\}/g, ' ').replace(/(["'])(?:(?=(\\?))\2.)*?\1/g, ' ');
+  const cleaned = body
+    // 字符串字面量整体忽略
+    .replace(/(["'])(?:(?=(\\?))\2.)*?\1/g, ' ')
+    // EL 定界符（${…} / #{…}）当分隔符，内部表达式保留
+    .replace(/[$#]\{/g, ' ')
+    .replace(/\}/g, ' ')
+    // 去掉属性/方法访问段，只保留根标识符
+    .replace(/\.[A-Za-z_$][\w$]*/g, '');
   const found = cleaned.match(/[A-Za-z_$][\w$]*/g) || [];
   return [...new Set(found.filter((id) => !CONDITION_KEYWORDS.has(id) && !/^\d+$/.test(id)))];
 }
