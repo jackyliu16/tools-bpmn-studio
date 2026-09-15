@@ -100,7 +100,7 @@ jobs:
       - name: Package Electron — Linux
         run: npx electron-builder --linux --publish never
 
-      # ── 全量回归门（AppImage + Xvfb + CDP）：12 套件 / 205 项断言 ────
+      # ── 全量回归门（AppImage + Xvfb + CDP）：12 套件 / 265 项断言 ────
       # 编排器递归定位 release/**/*.AppImage，逐套件注入唯一 VERIFY_DISPLAY
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb

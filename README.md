@@ -166,8 +166,8 @@ release/win-unpacked/                  # 免安装目录（可直接双击运行
 | 层 | 命令 | 内容 | 前置 |
 | --- | --- | --- | --- |
 | 渲染冒烟 | `npm run test:smoke` | **45 项断言**：纯 BPMN / Camunda 7 / Camunda 8 / DMN 的导入零告警、元素渲染、8 个扩展服务（属性面板/小地图/校验/模拟/搜索/着色）可用、XML 往返、属性 provider 注册、bpmnlint 打包配置消费 | 无（Node + jsdom，经 `vite-node` 运行真实模块，不需浏览器/显示器） |
-| 纯逻辑套件 | `npm run test:verify` | **5 个套件 / 121 项断言**：studio 参数体系单测（描述符往返/双写命令/漂移/投影/检查规则）、规则文档路径映射、`electron/doc-links.cjs` 的 Markdown→HTML 注入面与 URL 白名单、抽取模块的纯函数（`xml-view` / `diagnostics` / `file-io`）、lint 反向引用与 DI-label 误报回归 | 无 |
-| 全量回归 | `npm run test:verify:all` | **12 个套件 / 247 项断言**：在纯逻辑套件之上叠加 7 个 **AppImage + Xvfb + CDP** 端到端套件 | 已构建的 AppImage（`./build-head.sh --electron --targets AppImage`）与 `Xvfb` |
+| 纯逻辑套件 | `npm run test:verify` | **5 个套件 / 133 项断言**：studio 参数体系单测（描述符往返/双写命令/漂移/投影/检查规则）、规则文档路径映射、`electron/doc-links.cjs` 的 Markdown→HTML 注入面与 URL 白名单、抽取模块的纯函数（`xml-view` / `diagnostics` / `file-io`）、lint 反向引用与 DI-label 误报回归 | 无 |
+| 全量回归 | `npm run test:verify:all` | **12 个套件 / 265 项断言**：在纯逻辑套件之上叠加 7 个 **AppImage + Xvfb + CDP** 端到端套件 | 已构建的 AppImage（`./build-head.sh --electron --targets AppImage`）与 `Xvfb` |
 
 端到端套件在**真实打包产物**中驱动 UI（`--appimage-extract-and-run --no-sandbox --ozone-platform=x11`，经 CDP WebSocket 断言），覆盖：缩放（BPMN/DMN 相对缩放、DMN 视图切换后标签同步）、脏标记与关窗守卫、Sprint 3 并发锁与失败回滚、控制要素面板（Camunda 字段/默认流/条件/lint 联动/悬空清理）、studio 参数体系双写与原子 undo、顶部栏分级压缩、规则文档在线/离线降级。
 

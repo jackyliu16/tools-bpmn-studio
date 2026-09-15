@@ -104,10 +104,11 @@ CI（新建 `.github/workflows/ci.yml` 覆盖 master push 与 PR；`release.yml`
 编排器存在的两个硬理由（实测）：
 1. E2E 脚本内建 `newestAppImage()` 只认 `release/<dir>/electron/BPMN Studio.AppImage`（build-head.sh 布局），
    而 CI 里 electron-builder 产出在 `release/BPMN Studio-<ver>.AppImage` → 不传显式路径必失败；
-2. `verify-sprint3` 与 `verify-control-panel` 默认都用 `:79`、`verify-dirty-guard`/`verify-topbar-narrow`/
-   `verify-doc-offline` 都用 `:78`，同号 Xvfb 的 `/tmp/.X<n>-lock` 残留会互踩 → 必须逐套件注入唯一 `VERIFY_DISPLAY`。
+2. `verify-sprint3` 与 `verify-control-panel` 默认都用 `:79`、`verify-dirty-guard`/`verify-topbar-narrow`
+   都用 `:78`（v0.2.1 起 `verify-doc-offline` 由 `:78`/port 9336 改为 `:82`/port 9342，消除与 topbar-narrow
+   的同号/同端口冲突），同号 Xvfb 的 `/tmp/.X<n>-lock` 残留会互踩 → 必须逐套件注入唯一 `VERIFY_DISPLAY`。
 
-当前门禁：**12 个套件 / 247 项断言**，本机 E2E 部分耗时约 1 分钟（不含 AppImage 构建）。
+当前门禁：**12 个套件 / 265 项断言**，本机 E2E 部分耗时约 1 分钟（不含 AppImage 构建）。
 
 ---
 
@@ -144,3 +145,27 @@ CI（新建 `.github/workflows/ci.yml` 覆盖 master push 与 PR；`release.yml`
 
 - `git push && git tag v0.1.12 && git push --tags`（tag 必须等于 v+package.json 版本；v0.1.10/v0.1.11 从未发过 tag，内容已线性叠加在 master，可直接发 v0.1.12）
 - 发版前先升 `package.json` 版本并提交。
+
+---
+
+## v0.2.0 审计缺陷修复（2026-09-16，P1–P10）
+
+对 v0.2.0（控制要素 + studio 参数体系 + M1–M4 抽取）做了完整回归与逐 commit 审计，
+确认 M1–M4 抽取行为等价，但新功能与测试基建存在 10 项缺陷。本轮全部修复并补回归，
+门禁从 **247** 提升到 **265** 项断言。
+
+| 编号 | 问题 | 修复 |
+| --- | --- | --- |
+| P1 | R1 把 `order.status` 的 `status` 误报为未声明变量；`${…}` 条件被整段忽略（漏报） | `extractConditionIdentifiers` 只取根标识符并解析 EL 定界符 |
+| P2 | R4 漂移判定按下标比较，外部工具重排即误报 | 改为无序多重集比较 |
+| P3 | R6 消费者是全局集合，跨进程入参抑制本作用域告警 | 消费者按作用域归类 |
+| P4 | 作用域目录沿祖先链上溯，子流程内部出参泄漏到父作用域 | 收紧为直接子级 `$parent === scope` |
+| P5 | 「网关默认流」设过之后无法清空 | 下拉补空值「（无）」选项 |
+| P6 | `flow-badge` 用 `remove({element,id})` 连带删掉同元素上的其它 overlay | 改为 `{ type }` 精确移除 |
+| P7 | `verify-patch-e2e` 第二条断言超时未执行也算通过（且 `canvas.resized()` 根本不触发 lint） | 超时判失败 + 显式 `linting.update()` |
+| P8 | 编排器超时只杀直接子进程；`verify-doc-offline` 与 `verify-topbar-narrow` 同端口 | 进程组 kill + 端口/显示号隔离 |
+| P9 | 文档计数漂移（205 / 247） | 同步为实测 265 |
+| P10 | ci.yml 不校验离线文档完整性；门禁对构建期抓取网络抖动敏感 | ci.yml 加 `--check`；`verify-rule-docs` 缺项时先重抓一次；fetch 拒绝空响应并落 `fetch-status.json` |
+
+回归覆盖：`studio-param-unit` 新增 12 项（P1–P4），`verify-control-panel` 新增 3 项（P5），
+`verify-studio-params` 新增 3 项（P1 根标识符 / `${}` / P6 overlay 保留）。
