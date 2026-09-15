@@ -29,8 +29,8 @@ function newestAppImage() {
 const appimage = process.argv[2] || newestAppImage();
 console.log('AppImage:', appimage);
 
-const DISPLAY = process.env.VERIFY_DISPLAY || ':78';
-const PORT = 9336;
+const DISPLAY = process.env.VERIFY_DISPLAY || ':82';
+const PORT = 9342;
 
 const xvfb = spawn('Xvfb', [DISPLAY, '-screen', '0', '1600x1000x24'], { stdio: 'ignore' });
 await new Promise((r) => setTimeout(r, 800));

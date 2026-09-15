@@ -131,12 +131,21 @@ function runSuite(suite, { appImage, display, timeoutSec }) {
     }
 
     const started = Date.now();
-    const child = spawn(cmd, args, { cwd: root, env });
+    const child = spawn(cmd, args, { cwd: root, env, detached: process.platform !== 'win32' });
     let out = '';
     let timedOut = false;
+    // E2E 套件自己会再 spawn Xvfb/AppImage；只 kill 直接子进程会留下孤儿，
+    // 占住 /tmp/.X<n>-lock 与 CDP 端口。detached 后按进程组整组杀。
+    const killTree = (signal) => {
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        try { child.kill(signal); } catch { /* already gone */ }
+      }
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      killTree('SIGKILL');
     }, timeoutSec * 1000);
 
     child.stdout.on('data', (d) => { out += d; });
