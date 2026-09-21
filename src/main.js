@@ -194,8 +194,15 @@ import { extractParseLocation, excerptLines, describeFsError } from './error-det
 
 import initialDiagramXML from '../resources/newDiagram.bpmn?raw';
 
-// --- DMN editor -----------------------------------------------------------
-import { createDmnModeler, EMPTY_DMN_XML } from './dmn-editor.js';
+// --- DMN editor (lazy) ----------------------------------------------------------
+// dmn-js 全家（含 8 份 CSS）仅在进入 DMN 模式时才加载（Fix C）：BPMN 首屏不背
+// dmn-js 体积，产物拆为独立 chunk 按需加载。模块级缓存 promise 单例，首次进入
+// 异步 import 一次，之后的模式切换零等待（并发由 guarded() 串行化）。
+let dmnModulePromise = null;
+function loadDmnModule() {
+  if (!dmnModulePromise) dmnModulePromise = import('./dmn-editor.js');
+  return dmnModulePromise;
+}
 
 // --- DOM ------------------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -642,8 +649,9 @@ function destroyModeler() {
 }
 
 // --- DMN modeler lifecycle --------------------------------------------------
-function createDmnEditor() {
-  const modeler = createDmnModeler('#js-dmn-canvas');
+/** @param {{createDmnModeler: Function}} dmnModule 已加载的 dmn-editor 模块（懒加载） */
+function createDmnEditor(dmnModule) {
+  const modeler = dmnModule.createDmnModeler('#js-dmn-canvas');
 
   bindDmnModelerEvents(modeler);
   if (debugGlobals) window.__dmnModeler = modeler;
@@ -672,13 +680,16 @@ function destroyDmnEditor() {
   els.statusRight.textContent = '';
 }
 
-function switchToDmnMode() {
+async function switchToDmnMode() {
   if (editorMode === 'dmn') return;
+  // dmn-js 按需加载（Fix C）：先完成 chunk 加载再销毁 BPMN 编辑器，
+  // 避免卸载后等待加载期间出现「无编辑器」空窗
+  const dmnModule = await loadDmnModule();
   destroyModeler();
   editorMode = 'dmn';
   els.canvas.classList.add('hidden');
   els.dmnCanvas.classList.remove('hidden');
-  dmnModeler = createDmnEditor();
+  dmnModeler = createDmnEditor(dmnModule);
 }
 
 function switchToBpmnMode() {
@@ -958,9 +969,9 @@ function ensureModeler(xml) {
 }
 
 /** ensure the correct editor mode is active for the given file type */
-function ensureEditorMode(fileType) {
+async function ensureEditorMode(fileType) {
   if (fileType === 'dmn') {
-    switchToDmnMode();
+    await switchToDmnMode();
   } else {
     switchToBpmnMode();
   }
@@ -982,7 +993,7 @@ async function setDiagram(xml, name, filePath) {
       }
     : null;
 
-  ensureEditorMode(fileType);
+  await ensureEditorMode(fileType);
   try {
     if (fileType === 'dmn') {
       await setDmnDiagram(xml, name, filePath);
@@ -998,7 +1009,7 @@ async function setDiagram(xml, name, filePath) {
 /** 跨模式导入失败 → 恢复原编辑器模式并重导入切换前快照（Fix 7） */
 async function rollbackAfterFailedModeSwitch(snapshot) {
   try {
-    ensureEditorMode(snapshot.mode);
+    await ensureEditorMode(snapshot.mode);
     if (snapshot.xml) {
       if (snapshot.mode === 'dmn') {
         await dmnModeler.importXML(snapshot.xml);
@@ -1021,7 +1032,7 @@ async function rollbackAfterFailedModeSwitch(snapshot) {
 
 async function setDmnDiagram(xml, name, filePath) {
   // 预检先于一切触碰画布的动作：格式错误 → 直接友好错误卡，画布/上一模型保持原样
-  const preErr = precheckDmnXml(xml);
+  const preErr = precheckXml(xml, true);
   if (preErr) {
     preErr.warnings = [];
     preErr.parseLocation = null;
@@ -1030,19 +1041,7 @@ async function setDmnDiagram(xml, name, filePath) {
   }
   // 快照必须先于导入：失败导入会清空画布，无快照则用户只看得到空白编辑区
   const previousXml = await snapshotCurrentXml();
-  let warnings;
-  try {
-    ({ warnings } = await dmnModeler.importXML(xml));
-  } catch (err) {
-    err.warnings = err.warnings || [];
-    err.parseLocation = extractParseLocation(err);
-    err.failedXml = xml;
-    // 镜像 setBpmnDiagram 失败路径：恢复上一可用模型后精确重算脏标记
-    // （restorePreviousModel/rebaseDirtyAfterRestore 均 modeler 通用，走 saveXML/importXML）
-    await restorePreviousModel(dmnModeler, previousXml);
-    await rebaseDirtyAfterRestore();
-    throw err;
-  }
+  const { warnings } = await importXmlWithRecovery(dmnModeler, xml, { previousXml });
 
   if (warnings && warnings.length) {
     console.warn('DMN import warnings', warnings);
@@ -1103,43 +1102,62 @@ async function restorePreviousModel(modeler, previousXml) {
 }
 
 /**
- * BPMN XML 导入前预检（在触碰画布/modeler 之前）：
- *  - 格式良好性（DOMParser）
- *  - 包含 BPMNDI 图（<…:BPMNDiagram>，任意前缀）——缺失时 bpmn-js 会 'no diagram to
- *    display' 失败，且失败时画布已被清空、根对象残缺，属性面板会崩溃；预检把这种
- *    「残缺」提前变成友好错误卡，画布保持原样。
+ * 统一的「导入 + 失败恢复 + 脏标记重算」脚手架（Fix E，行为与三处旧实现逐字节等价）。
  *
- * @param {string} xml
- * @returns {Error|null} 返回 Error 时 message 即用户可读的失败原因
+ * 快照时序由调用方控制（previousXml 参数）：setBpmnDiagram 等路径必须先快照再
+ * ensureModeler（平台切换会销毁旧 modeler），故不在此内部取快照；未传时兑底自身取。
+ * 失败路径统一：增强 error 载荷（warnings/parseLocation/failedXml）→ 用快照自身平台
+ * 的模型器恢复旧图（restoreModeler 回调，Fix 8：快照带 zeebe 而当前模型器是 camunda 时
+ * 直接导回会丢 zeebe 扩展属性）→ 精确重算脏标记 → 重抛。
+ *
+ * @param {object} modeler  bpmn-js / dmn-js 实例
+ * @param {string} xml      待导入内容
+ * @param {object} [options]
+ * @param {string|null} [options.previousXml] 导入前快照（调用方已在平台切换之前取）
+ * @param {(prevXml: string|null) => object} [options.restoreModeler] 按快照选恢复用模型器
+ *   （DMN 传恒等、BPMN 传 ensureModeler）；默认返回传入的 modeler 本身
+ * @returns {Promise<{warnings: Array}>}
  */
-function precheckBpmnXml(xml) {
+async function importXmlWithRecovery(modeler, xml, options = {}) {
+  const previousXml = options.previousXml !== undefined ? options.previousXml : await snapshotCurrentXml();
+  const restoreModeler = options.restoreModeler || (() => modeler);
+  let warnings;
   try {
-    const parsed = new DOMParser().parseFromString(xml, 'application/xml');
-    const perr = parsed.getElementsByTagName('parsererror')[0];
-    if (perr) return new Error('XML 格式错误：' + perr.textContent.trim());
+    ({ warnings } = await modeler.importXML(xml));
   } catch (err) {
-    return new Error('XML 格式错误：' + (err.message || String(err)));
+    err.warnings = err.warnings || [];
+    err.parseLocation = extractParseLocation(err);
+    err.failedXml = xml;
+    // 恢复上一个可用模型：失败导入已清空画布/替换 definitions，不恢复则用户只看得到空白编辑区
+    await restorePreviousModel(restoreModeler(previousXml), previousXml);
+    await rebaseDirtyAfterRestore();
+    throw err;
   }
-  if (!/<[\w.-]+:BPMNDiagram\b/.test(xml)) {
-    return new Error('文件中没有 BPMNDI 图形定义（缺少 <BPMNDiagram>），无法绘制图表');
-  }
-  return null;
+  return { warnings };
 }
 
 /**
- * DMN XML 导入前预检（触碰画布之前）：仅检查格式良好性。
- * dmn-js 对缺 DMNDI 有视图回退逻辑（_getInitialView），故不做 DI 强制（与 BPMN 不同）。
+ * XML 导入前预检（在触碰画布/modeler 之前，BPMN/DMN 共用，Fix E）：
+ *  - 格式良好性（DOMParser）
+ *  - isDmn=false（BPMN）时额外要求 BPMNDI 图（<…:BPMNDiagram>，任意前缀）——缺失时
+ *    bpmn-js 会 'no diagram to display' 失败，且失败时画布已被清空、根对象残缺，
+ *    属性面板会崩溃；预检把这种「残缺」提前变成友好错误卡，画布保持原样。
+ *    DMN 对缺 DMNDI 有视图回退逻辑（_getInitialView），故不做 DI 强制。
  *
  * @param {string} xml
+ * @param {boolean} isDmn 是否为 DMN 模式（跳过 BPMNDI 检查）
  * @returns {Error|null} 返回 Error 时 message 即用户可读的失败原因
  */
-function precheckDmnXml(xml) {
+function precheckXml(xml, isDmn) {
   try {
     const parsed = new DOMParser().parseFromString(xml, 'application/xml');
     const perr = parsed.getElementsByTagName('parsererror')[0];
     if (perr) return new Error('XML 格式错误：' + perr.textContent.trim());
   } catch (err) {
     return new Error('XML 格式错误：' + (err.message || String(err)));
+  }
+  if (!isDmn && !/<[\w.-]+:BPMNDiagram\b/.test(xml)) {
+    return new Error('文件中没有 BPMNDI 图形定义（缺少 <BPMNDiagram>），无法绘制图表');
   }
   return null;
 }
@@ -1165,7 +1183,7 @@ function assertRenderableBpmnRoot(modeler, warnings, xml) {
 
 async function setBpmnDiagram(xml, name, filePath) {
   // 预检先于一切触碰画布的动作：格式错误/缺 BPMNDI → 直接友好错误卡，画布保持原样
-  const preErr = precheckBpmnXml(xml);
+  const preErr = precheckXml(xml, false);
   if (preErr) {
     preErr.warnings = [];
     preErr.parseLocation = null;
@@ -1175,22 +1193,12 @@ async function setBpmnDiagram(xml, name, filePath) {
   // 快照必须先于 ensureModeler：平台切换会销毁旧 modeler
   const previousXml = await snapshotCurrentXml();
   const modeler = ensureModeler(xml);
-
-  let warnings;
-  try {
-    ({ warnings } = await modeler.importXML(xml));
-  } catch (err) {
-    err.warnings = err.warnings || [];
-    err.parseLocation = extractParseLocation(err);
-    err.failedXml = xml;
-    // 恢复上一个可用模型：失败导入已清空画布，不恢复则用户只看得到空白编辑区
+  const { warnings } = await importXmlWithRecovery(modeler, xml, {
+    previousXml,
     // Fix 8：回滚用模型按快照自身平台创建——快照带 zeebe 而当前模型器是 camunda 时，
     // 直接导回会丢 zeebe 扩展属性（这也是「/definitions 兜底」丢内容的根因）
-    const restoreModeler = previousXml ? ensureModeler(previousXml) : modeler;
-    await restorePreviousModel(restoreModeler, previousXml);
-    await rebaseDirtyAfterRestore();
-    throw err;
-  }
+    restoreModeler: (prev) => (prev ? ensureModeler(prev) : modeler)
+  });
 
   // lax 解析可能“成功”但根元素不可渲染 → 转成明确错误，而非空画布+面板崩溃
   assertRenderableBpmnRoot(modeler, warnings, xml);
@@ -1253,7 +1261,9 @@ async function createNewDmnDiagramInner() {
   if (!confirmDiscardUnsaved()) return;
   stopSimulationIfNeeded();
   try {
-    switchToDmnMode();
+    await switchToDmnMode();
+    // EMPTY_DMN_XML 来自懒加载模块（Fix C）：switchToDmnMode 已确保 chunk 就绪
+    const { EMPTY_DMN_XML } = await loadDmnModule();
     await setDmnDiagram(EMPTY_DMN_XML, 'untitled.dmn', null);
     setStatus('新建设策图完成');
   } catch (err) {
@@ -1504,7 +1514,7 @@ async function applyXmlEditsInner() {
 
   // 预检（模式感知，M4）：BPMN 需 BPMNDI；DMN 仅查格式良好性（缺 DI 有视图回退）
   const isDmn = editorMode === 'dmn';
-  const preErr = isDmn ? precheckDmnXml(editedXml) : precheckBpmnXml(editedXml);
+  const preErr = precheckXml(editedXml, isDmn);
   if (preErr) {
     showError({
       title: 'XML 预检失败',
@@ -1524,20 +1534,11 @@ async function applyXmlEditsInner() {
     // DMN 模态下 dmnModeler 必存在（ensureEditorMode 已建）；BPMN 走平台切换重建
     const modeler = isDmn ? dmnModeler : ensureModeler(editedXml);
     if (!modeler) throw new Error('编辑器尚未就绪，请重新打开图表');
-    let warnings = [];
-    try {
-      ({ warnings } = await modeler.importXML(editedXml));
-    } catch (err) {
-      err.warnings = err.warnings || [];
-      err.parseLocation = extractParseLocation(err);
-      err.failedXml = editedXml;
-      // 恢复上一个可用模型：失败导入已清空画布/替换 definitions
+    const { warnings } = await importXmlWithRecovery(modeler, editedXml, {
+      previousXml,
       // Fix 8：回滚用模型按快照自身平台创建（同 setBpmnDiagram 失败路径）
-      const restoreModeler = !isDmn && previousXml ? ensureModeler(previousXml) : modeler;
-      await restorePreviousModel(restoreModeler, previousXml);
-      await rebaseDirtyAfterRestore();
-      throw err;
-    }
+      restoreModeler: (prev) => (!isDmn && prev ? ensureModeler(prev) : modeler)
+    });
 
     if (!isDmn) {
       // 与 setBpmnDiagram 相同的根元素可渲染校验（DMN 无对应断言，导入自带视图回退）
@@ -1905,8 +1906,8 @@ function toggleStudioCheckPanel() {
 // 这里只服务纯浏览器形态：探测 github.com 连通性（CSP connect-src 已放行该域，2s 超时）
 // → 在线：新标签打开原始地址；离线：弹本地打包文档（相对 fetch，同源部署/本地解压均可用）。
 const DOC_PROBE_TIMEOUT_MS = 2000;
-// web 版探测端点：与 Electron 主进程同构（raw/api 域直连可达性通常优于 github.com）
-const DOC_PROBE_URLS = ['https://github.com', 'https://raw.githubusercontent.com', 'https://api.github.com'];
+// web 版探测端点（Fix F，单点维护自 electron/doc-links.cjs，与主进程同构）
+const DOC_PROBE_URLS = docLinks.DOC_PROBE_URLS;
 const DOC_OPENED = new Set(); // 连续点击去重（缓冲期内重复点击不重复探测）
 
 /** 打开（或去重拒绝）一次 web 版规则文档访问 */
