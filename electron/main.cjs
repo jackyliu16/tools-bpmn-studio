@@ -191,14 +191,10 @@ function resolveLocalDoc(rel) {
   return fs.existsSync(p) ? p : null;
 }
 
-// 探测端点：raw/api 域直连可达性通常优于 github.com 主页（例如本仓库构建机：
-// shell 层代理仅覆盖 curl，undici/Chromium 直连 github.com 超时，但 raw 域可达）。
-// 多端点并行竞速，任一可达即判定在线，避免单端点误判。
-const DOC_PROBE_URLS = [
-  'https://github.com',
-  'https://raw.githubusercontent.com',
-  'https://api.github.com'
-];
+// 探测端点（Fix F，单点维护自 electron/doc-links.cjs）：raw/api 域直连可达性通常优于
+// github.com 主页（例如本仓库构建机：shell 层代理仅覆盖 curl，undici/Chromium 直连
+// github.com 超时，但 raw 域可达）。多端点并行竞速，任一可达即判定在线。
+const DOC_PROBE_URLS = docLinks.DOC_PROBE_URLS;
 
 // 直连探测用 Node https.request（原生模块，不经 Chromium 网络栈、不读 shell 代理 env）——
 // 实证 Electron 主进程全局 fetch 也被替换为 Chromium 栈，双栈同源会导致代理/直连混淆。

@@ -171,12 +171,25 @@ function mdToHtml(md) {
   return out.join('\n');
 }
 
+/**
+ * 在线探测端点（Fix F，三端单点维护）：raw/api 域直连可达性通常优于 github.com 主页
+ * （例如本仓库构建机：shell 层代理仅覆盖 curl，undici/Chromium 直连 github.com 超时，
+ * 但 raw 域可达）。多端点并行竞速，任一可达即判定在线，避免单端点误判。
+ * 供 electron/main.cjs（主进程）与 src/main.js（浏览器版）共用。
+ */
+const DOC_PROBE_URLS = [
+  'https://github.com',
+  'https://raw.githubusercontent.com',
+  'https://api.github.com'
+];
+
 module.exports = {
   isAllowedGithubDocUrl,
   githubToLocalRel,
   localDocRelPath,
   relToGithubUrl,
   mdToHtml,
+  DOC_PROBE_URLS,
   BPMNLINT_GITHUB_PATH,
   CAMUNDA_GITHUB_PATH
 };
