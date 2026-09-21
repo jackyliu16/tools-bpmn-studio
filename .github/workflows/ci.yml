@@ -59,6 +59,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 新鲜克隆门禁：src/lint-config.js 是 gitignored 产物（main.js 静态 import），
+      # dev 若不能自动生成（依赖 predev 钩子）则服务起不来。此步骤在 build 之前
+      # 直接跑 npm run dev 并轮询 HTTP 200 —— 缺失该钩子时 unresolved import 会
+      # 让 vite 退出，门禁立即红灯（ubuntu-latest 独立运行器，5173 无占用）。
+      - name: Fresh-clone dev server boot (lint-config.js absent)
+        run: |
+          set -euo pipefail
+          timeout 60 bash -c '
+            npm run dev > /tmp/vite-dev.log 2>&1 &
+            VITE_PID=$!
+            trap "kill $VITE_PID 2>/dev/null || true" EXIT
+            for i in $(seq 1 45); do
+              if curl -fsS http://localhost:5173/ -o /dev/null 2>&1; then
+                echo "dev server booted (attempt $i)"
+                exit 0
+              fi
+              if ! kill -0 $VITE_PID 2>/dev/null; then
+                echo "vite exited prematurely:"; cat /tmp/vite-dev.log; exit 1
+              fi
+              sleep 1
+            done
+            echo "dev server did not answer on :5173"; cat /tmp/vite-dev.log; exit 1
+          '
+
       - name: Lint JS
         run: npm run lint:js
 
