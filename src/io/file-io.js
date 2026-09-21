@@ -37,6 +37,11 @@ export function basename(p) {
  * @param {(result: object) => void} deps.showFsError
  * @param {(xml: string, name: string, path: string|null) => Promise<void>} deps.openDiagramContent
  */
+
+/** PNG 导出最大边长（px，Fix D）：canvas 有 ~32767px 上限，超大图按比例降采样避免
+ * 白屏/内存爆炸；小图仍保持 2× 原生导出。 */
+const MAX_EXPORT_PX = 8192;
+
 export function createFileIO({
   els,
   getBridge,
@@ -192,7 +197,6 @@ export function createFileIO({
     try {
       const svg = await saveActiveSvg();
       if (svg === null) return;
-
       const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(svgBlob);
 
@@ -206,7 +210,7 @@ export function createFileIO({
           img.src = url;
         });
 
-        const scale = 2;
+        const scale = Math.min(2, MAX_EXPORT_PX / Math.max(1, img.width, img.height));
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, Math.round(img.width * scale));
         canvas.height = Math.max(1, Math.round(img.height * scale));
@@ -241,20 +245,24 @@ export function createFileIO({
     }
   }
 
+  /** 读取 File → 导入当前模型（打开/拖放共用，Fix G：读文本与错误卡单点实现） */
+  async function handleFileInput(file) {
+    if (!file) return;
+    let content;
+    try {
+      content = await file.text();
+    } catch (err) {
+      console.error(err);
+      showError({ title: `读取文件失败：${file.name}`, message: err.message || String(err), error: err });
+      return;
+    }
+    await openDiagramContent(content, file.name, null);
+  }
+
   /** 浏览器环境的文件选择兜底（Electron 下走原生对话框，不触发） */
   function bindFileInput() {
-    els.fileInput.addEventListener('change', async () => {
-      const file = els.fileInput.files[0];
-      if (!file) return;
-      let content;
-      try {
-        content = await file.text();
-      } catch (err) {
-        console.error(err);
-        showError({ title: `读取文件失败：${file.name}`, message: err.message || String(err), error: err });
-        return;
-      }
-      await openDiagramContent(content, file.name, null);
+    els.fileInput.addEventListener('change', () => {
+      handleFileInput(els.fileInput.files[0]);
     });
   }
 
@@ -269,21 +277,12 @@ export function createFileIO({
       host.addEventListener('dragleave', () => {
         delete host.dataset.dragging;
       });
-      host.addEventListener('drop', async (e) => {
+      host.addEventListener('drop', (e) => {
         e.preventDefault();
         delete host.dataset.dragging;
         const files = e.dataTransfer.files;
         if (!files.length) return;
-        const file = files[0];
-        let content;
-        try {
-          content = await file.text();
-        } catch (err) {
-          console.error(err);
-          showError({ title: `读取文件失败：${file.name}`, message: err.message || String(err), error: err });
-          return;
-        }
-        await openDiagramContent(content, file.name, null);
+        handleFileInput(files[0]);
       });
     }
   }
