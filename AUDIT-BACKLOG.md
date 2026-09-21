@@ -1,12 +1,36 @@
 # Audit Backlog — bpmn-studio
 
-> **当前追踪：v0.1.11 多维审计（2026-09-05 重跑，报告见 `AUDIT-REPORT-v0.1.11.md`）**。
-> 修复落地目标 **v0.1.12**（Sprint 3 / 3b / 4，共 20 项）。完成一项勾选一项并同步报告。
->
-> **历史（已归档，勿再追踪）**：v0.1.9 审计（原 `AUDIT-REPORT.md`，报告文件已随全部发现消纳而删除）——
-> Sprint 1（H1–H5，v0.1.10）+ Sprint 2（M1–M15、L1–L10、L12–L16、L18–L20，v0.1.11）全部落地，
-> 代码级发现消纳 36/39；其余 L11/L17（当时去重阶段细节不可考）已由本轮 v0.1.11 重跑审计覆盖，**该遗留项关闭**。
-> 全部修复过程与验证结论见 git history（`chore(release): 0.1.10` / `0.1.11` 系列提交）。
+> **当前追踪：v0.2.1 多维优化（2026，Fix A–G）**。全部落地 + 验证见下方「v0.2.1 优化轮」。
+> 历史轮次（v0.1.9 → v0.1.12 / v0.2.0）已归档，勿再追踪。
+
+---
+
+## v0.2.1 优化轮 — 多维检视修复（Fix A–G，2026）
+
+> 本轮针对 repo 全面检视发现的 7 项优化（详见对话评审）：
+> 新克隆 dev 断裂 / 2.2MB 单 chunk / PNG 导出无上限 / import-recovery 三份拷贝 /
+> 探测端点双份 / 读取样板重复 / 依赖小版本。全部已验证通过。
+
+- [x] Fix A · 新克隆 `npm run dev` 不再断裂：`predev`/`pretest:*` 钩子自动生成 gitignored 的 `src/lint-config.js`；CI 新增 fresh-clone dev 门禁（build 之前起 dev server 轮询 HTTP 200，编码此回归）
+- [x] Fix B · 依赖小版本/补丁升级：bpmn-js 18.28.0、properties-panel 3.55.0、bpmnlint 11.14.0、electron 44.4.3、vite 8.3.0（严格锁版/^ 随原策略）
+- [x] Fix C · DMN 懒加载：dmn-js 全家拆为独立 chunk（319.6KB js + 94KB css），首次进入 DMN 模式动态 import；首屏 index.js 2267→1952KB（-14%）
+- [x] Fix D · PNG 导出最大边长上限 8192px（等比降采样，小图仍 2×），防 canvas 超限白屏/内存爆炸
+- [x] Fix E · import-recovery 去重：`precheckXml(xml, isDmn)` 合并两个预检；`importXmlWithRecovery()` 统一「快照→导入→失败恢复+脏标记重算」脚手架（-约 100 行，行为逐字节等价，由既有套件证明）
+- [x] Fix F · 文档探测端点 `DOC_PROBE_URLS` 单点维护至 electron/doc-links.cjs（主进程/浏览器共用）
+- [x] Fix G · file-io 打开/拖放读取样板合并为 `handleFileInput(file)`
+
+### 验证结论
+
+- `npm run lint:js`：0 error（no-console 为允许的 warn）
+- `npm run build` + `fetch-rule-docs --check` 通过（本机构网络抖动时 verify-rule-docs 偶发抓取失败，重抓即绿——既有环境特性，非代码回归）
+- `npm run test:smoke` 45/45；`npm run test:verify` 5/5 套件（36/36 + 13/13 + 74/74 + 8/8 + 2/2）
+- 全量 E2E：见 v0.2.1 提交记录（CI 门禁含 12 套件 + fresh-clone dev 门禁）
+
+### 后续 backlog（本轮刻意不做，待专项评估）
+
+- [ ] 依赖 major 升级评估：zeebe-bpmn-moddle 2.0（序列化行为变化需专项验证）、eslint 10、jsdom 30、globals 17；electron-builder 版本表异常需查
+- [ ] `ActiveEditorContext` 抽象（main.js 双模式统一调用点；DMN 精确脏跟踪、`_stackIdx` 依赖消除一并落地）——架构备注既有项
+- [ ] manualChunks vendor 拆包（备选：若 CDN/缓存收益明确再做；当前 DMN 懒加载已达标）
 
 ---
 

@@ -42,6 +42,9 @@ npm run test:smoke       # 45 项，jsdom 渲染冒烟，秒级
 npm run test:verify      # 5 个纯逻辑套件 / 121 项断言，秒级
 ```
 
+> 「提交前门禁」里的 `test:*` 与 `npm run dev` 都会先自动执行 `lint:pack`
+> （pre* 钩子），新克隆无需手动生成 `src/lint-config.js`。
+
 涉及运行时行为的改动，还必须跑全量端到端回归：
 
 ```sh

@@ -124,6 +124,10 @@ npm run serve            # 局域网可访问的静态服务
 npm run test:smoke       # 验证 纯BPMN / Camunda 7 / Camunda 8 / DMN 四种场景（44 项）
 ```
 
+> 首次运行 `npm run dev` / `npm run test:*` 会自动生成 `src/lint-config.js`
+> （由 `predev` / `pretest:*` 钩子触发 `lint:pack` 打包校验规则），无需手动执行。
+> 该文件 gitignored，`npm run build` 也会在构建时重新生成。
+
 `dist/` 是自包含静态站点：任何静态服务器（nginx、`npx serve`、GitHub Pages…）都能托管，
 `vite.config.js` 使用相对路径，因此也可以直接用浏览器打开 `dist/index.html`。
 
