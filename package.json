@@ -18,6 +18,7 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
+    "predev": "npm run lint:pack",
     "dev": "vite",
     "build": "npm run lint:pack && npm run lint:js && vite build && node scripts/fetch-rule-docs.mjs",
     "preview": "vite preview",
@@ -25,8 +26,11 @@
     "electron:dev": "npm run build && electron .",
     "lint:pack": "bpmnlint-pack-config -c .bpmnlintrc -o src/lint-config.js -t es",
     "lint:js": "eslint .",
+    "pretest:smoke": "npm run lint:pack",
     "test:smoke": "vite-node scripts/smoke.mjs",
+    "pretest:verify": "npm run lint:pack",
     "test:verify": "node scripts/verify/run-all.mjs --pure",
+    "pretest:verify:all": "npm run lint:pack",
     "test:verify:all": "node scripts/verify/run-all.mjs --all",
     "dist": "npm run build && electron-builder --linux",
     "dist:linux": "npm run build && electron-builder --linux",
@@ -35,13 +39,13 @@
     "test:ui": "vite-node --config scripts/ui.vite.config.mjs scripts/ui-harness.mjs"
   },
   "dependencies": {
-    "@bpmn-io/properties-panel": "3.52.0",
-    "bpmn-js": "18.25.1",
+    "@bpmn-io/properties-panel": "3.55.0",
+    "bpmn-js": "18.28.0",
     "bpmn-js-bpmnlint": "0.24.0",
     "bpmn-js-color-picker": "0.7.2",
     "bpmn-js-properties-panel": "5.65.0",
     "bpmn-js-token-simulation": "0.40.0",
-    "bpmnlint": "11.13.0",
+    "bpmnlint": "11.14.0",
     "bpmnlint-plugin-camunda": "0.6.1",
     "camunda-bpmn-moddle": "8.0.1",
     "diagram-js-minimap": "5.4.1",
@@ -54,12 +58,12 @@
     "@eslint/js": "^9.0.0",
     "bpmnlint-pack-config": "^0.9.0",
     "css.escape": "^1.5.1",
-    "electron": "44.2.0",
+    "electron": "44.4.3",
     "electron-builder": "^26.15.7",
     "eslint": "^9.0.0",
     "globals": "^15.0.0",
     "jsdom": "^26.1.0",
-    "vite": "^8.2.2",
+    "vite": "^8.3.0",
     "vite-node": "^6.0.0"
   },
   "build": {
