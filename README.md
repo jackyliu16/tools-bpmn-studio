@@ -115,10 +115,11 @@ npm install
 # 开发模式：http://localhost:5173
 npm run dev
 
-# 生产构建：产物在 dist/（纯静态，可直接部署或双击打开）
+# 生产构建：产物在 dist/（纯静态，用任意静态服务器托管）
 npm run build
-npm run preview          # 本地预览 dist
+npm run preview          # 本地预览 dist（vite preview）
 npm run serve            # 局域网可访问的静态服务
+node scripts/serve.mjs dist   # 零依赖静态服务器（仅需 Node，离线可用）
 
 # 渲染进程冒烟测试（Node + jsdom，无需浏览器/显示器）
 npm run test:smoke       # 验证 纯BPMN / Camunda 7 / Camunda 8 / DMN 四种场景（44 项）
@@ -129,7 +130,23 @@ npm run test:smoke       # 验证 纯BPMN / Camunda 7 / Camunda 8 / DMN 四种�
 > 该文件 gitignored，`npm run build` 也会在构建时重新生成。
 
 `dist/` 是自包含静态站点：任何静态服务器（nginx、`npx serve`、GitHub Pages…）都能托管，
-`vite.config.js` 使用相对路径，因此也可以直接用浏览器打开 `dist/index.html`。
+`vite.config.js` 使用相对路径，放到任意子目录/子路径下均可。
+
+> ⚠️ **不能直接双击 `index.html`（`file://`）**：产物是 ES module 构建
+> （`<script type="module" crossorigin>`），浏览器对 `file://` 的 module 脚本按 CORS
+> 拒绝（opaque origin），页面会停在未样式化的空壳。**必须经 HTTP 提供**。
+
+不用装任何东西即可启动（仅需 Node，不需要联网）：
+
+```sh
+node scripts/serve.mjs dist          # → http://127.0.0.1:8000/
+node scripts/serve.mjs dist 9000     # 换端口
+node scripts/serve.mjs dist 9000 0.0.0.0   # 局域网内其他机器可访问
+```
+
+该脚本是零依赖实现（只用 Node 内置模块），随 Web 发布包 `bpmn-studio-<版本>-web.zip`
+一起分发；也可换成任意等价方式（`python3 -m http.server -d dist`、nginx、`npx serve`——
+后者首次运行需要联网下载该包）。
 
 ---
 
@@ -213,6 +230,8 @@ git push origin master --tags
 4. **桌面打包** — electron-builder 打包 Linux（AppImage / deb / tar.gz）与 Windows（NSIS exe / zip），`--publish never`（统一由本流水线发布，与 `build-tag.sh` 一致）
 4.5. **全量回归（仅 Linux）** — 打包完成后跑 `npm run test:verify:all`（12 套件，AppImage + Xvfb + CDP），并 `node scripts/fetch-rule-docs.mjs --check` 校验内置规则文档完整性；Windows 侧不接（Xvfb 仅 Linux）
 5. **发布** — 创建 GitHub Release，上传 Web 静态包 + 全部安装包，更新说明取自上一版本 tag 到本次 tag 的提交记录（conventional commit 风格）
+   - Web 静态包 `bpmn-studio-<版本>-web.zip` = 成品站点（`index.html`/`assets/`/`docs/`）+ `package.json`
+     + 零依赖 `serve.mjs`：解压后 `node serve.mjs .` 即可启动，**无需安装依赖、无需联网**
 
 前置要求：仓库 **Settings → Actions → General → Workflow permissions** 需设为
 “Read and write permissions”（GITHUB_TOKEN 需要写权限创建 Release）。
@@ -249,6 +268,7 @@ bpmn-studio/
 └── scripts/
     ├── smoke.mjs            # 冒烟测试（BPMN × 3 平台 + DMN × 3 场景，45 项）
     ├── lib/testkit.mjs      # 测试脚本共享断言 runner
+    ├── serve.mjs            # 零依赖静态服务器（随 Web 发布包分发，离线可用）
     ├── verify/              # 回归套件（run-all.mjs 编排器 + 12 个套件）
     ├── diagnostics/         # 非门禁的一次性复现脚本（见该目录 README）
     └── make-icon.mjs        # 纯 Node 生成 PNG 图标
