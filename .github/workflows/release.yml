@@ -121,13 +121,17 @@ jobs:
           path: verify-logs/
           if-no-files-found: ignore
 
-      # ── 收集 Web 静态产物为 zip 资产（含 package.json，对应本地 web/ 目录）
+      # ── 收集 Web 静态产物为 zip 资产（含 package.json 与零依赖静态服务器）──
+      # serve.mjs 让「只有 Node、完全离线」的机器也能 `node serve.mjs` 一条命令跑起来；
+      # 产物是 ES module 构建，file:// 双击打开会被浏览器 CORS 拒绝，必须经 HTTP 提供。
       - name: Package web asset
         run: |
           VER="${GITHUB_REF#refs/tags/}"
           mkdir -p .web-asset
           cp -r dist/* .web-asset/
           cp package.json .web-asset/
+          cp scripts/serve.mjs .web-asset/
+          node scripts/serve.mjs --help > /dev/null   # 随包发布的脚本自检（语法/参数）——失败即发布红灯
           (cd .web-asset && zip -rq "../release/bpmn-studio-${VER#v}-web.zip" .)
           rm -rf .web-asset
 

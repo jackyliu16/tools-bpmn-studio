@@ -285,6 +285,9 @@ build_web_assets() {
   mkdir -p "$RELEASE_DIR/web"
   cp -r dist/* "$RELEASE_DIR/web/"
   cp package.json "$RELEASE_DIR/web/"
+  # 零依赖静态服务器随 Web 产物分发：使「只有 Node、完全离线」的机器也能一条命令起步
+  # （产物是 ES module 构建，file:// 双击打开会被浏览器 CORS 拒绝，必须经 HTTP 提供）
+  cp "$REPO_ROOT/scripts/serve.mjs" "$RELEASE_DIR/web/" || die "scripts/serve.mjs 缺失，无法随 Web 产物分发静态服务器"
 }
 
 # 构造 electron-builder 基础参数: --<platform> <targets...> -c.directories.output=…
